@@ -164,6 +164,46 @@ export const useUIStore = create<UIStore>()((set) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
 }));
 
+// ─── Live Market Store ────────────────────────────────────────────────────────
+export interface LiveQuote {
+  symbol: string;
+  price: number;
+  change: number;
+  changePercent: number;
+  volume: number;
+  marketCap: number;
+  pe: number;
+  high52w: number;
+  low52w: number;
+  open: number;
+  dayHigh: number;
+  dayLow: number;
+  prevClose: number;
+  name?: string;
+}
+
+interface LiveMarketStore {
+  quotes: Record<string, LiveQuote>;
+  isLoading: boolean;
+  error: string | null;
+  lastUpdated: number | null;
+  setQuotes: (q: Record<string, LiveQuote>) => void;
+  setLoading: (v: boolean) => void;
+  setError: (e: string | null) => void;
+  setLastUpdated: (ts: number) => void;
+}
+
+export const useLiveMarketStore = create<LiveMarketStore>()((set) => ({
+  quotes: {},
+  isLoading: true,
+  error: null,
+  lastUpdated: null,
+  setQuotes: (quotes) => set({ quotes }),
+  setLoading: (isLoading) => set({ isLoading }),
+  setError: (error) => set({ error }),
+  setLastUpdated: (lastUpdated) => set({ lastUpdated }),
+}));
+
 // ─── Notification / Telegram Store ───────────────────────────────────────────
 export interface AlertConfig {
   id: string;

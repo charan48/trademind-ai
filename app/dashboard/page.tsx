@@ -4,13 +4,12 @@ import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Brain, ArrowRight, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { AreaChart, Area, ResponsiveContainer, Tooltip, PieChart, Pie, Cell } from "recharts";
-import { STOCKS, INDICES, TOP_GAINERS, TOP_LOSERS, PORTFOLIO_STATS } from "@/lib/data/mockData";
-import { useWatchlistStore } from "@/lib/store/store";
+import { STOCKS, INDICES, PORTFOLIO_STATS } from "@/lib/data/mockData";
+import { useWatchlistStore, useLiveMarketStore } from "@/lib/store/store";
 import { ClientOnly } from "@/components/shared/ClientOnly";
 import { formatINR, formatPercent } from "@/lib/utils";
 import { generateIntraday } from "@/lib/utils";
 import { LiveClock } from "@/components/shared/LiveClock";
-import { useEffect, useState } from "react";
 
 const container = {
   hidden: { opacity: 0 },
@@ -22,10 +21,10 @@ const item = {
 };
 
 const AI_RECS = [
-  { symbol: "HDFC", name: "HDFC Bank", reason: "RSI breakout + strong Q3 NIM expansion. Institutions accumulating.", score: 91, sentiment: "Strongly Bullish", change: 1.81 },
-  { symbol: "RELIANCE", name: "Reliance Industries", reason: "Above all EMAs. Jio subscriber growth beats estimates.", score: 87, sentiment: "Bullish", change: 1.61 },
-  { symbol: "BAJFINANCE", name: "Bajaj Finance", reason: "AUM record + consumer demand recovery in NBFC space.", score: 82, sentiment: "Bullish", change: 1.90 },
-  { symbol: "SBIN", name: "State Bank of India", reason: "Cheap valuation, credit growth momentum, RBI tailwind.", score: 79, sentiment: "Bullish", change: 2.09 },
+  { symbol: "HDFC", name: "HDFC Bank", reason: "RSI breakout + strong Q3 NIM expansion. Institutions accumulating.", score: 91, sentiment: "Strongly Bullish" },
+  { symbol: "RELIANCE", name: "Reliance Industries", reason: "Above all EMAs. Jio subscriber growth beats estimates.", score: 87, sentiment: "Bullish" },
+  { symbol: "BAJFINANCE", name: "Bajaj Finance", reason: "AUM record + consumer demand recovery in NBFC space.", score: 82, sentiment: "Bullish" },
+  { symbol: "SBIN", name: "State Bank of India", reason: "Cheap valuation, credit growth momentum, RBI tailwind.", score: 79, sentiment: "Bullish" },
 ];
 
 const portfolioDonutData = [
@@ -35,28 +34,11 @@ const portfolioDonutData = [
   { name: "NBFC", value: 20.5, color: "#10B981" },
 ];
 
-// Simulated live prices — slight random drift every few seconds
-function useSimPrice(base: number, volatility = 0.0008) {
-  const [price, setPrice] = useState(base);
-  useEffect(() => {
-    const id = setInterval(() => {
-      setPrice(p => parseFloat((p + (Math.random() - 0.5) * volatility * p).toFixed(2)));
-    }, 2500 + Math.random() * 2000);
-    return () => clearInterval(id);
-  }, [base, volatility]);
-  return price;
-}
-
 export default function DashboardPage() {
   const { items: watchlist } = useWatchlistStore();
+  const { quotes, lastUpdated } = useLiveMarketStore();
   const niftyChart = generateIntraday(22847.90);
   const sensexChart = generateIntraday(75623.57);
-
-  // Live-simulated index values
-  const niftyLive   = useSimPrice(22847.90, 0.0005);
-  const sensexLive  = useSimPrice(75623.57, 0.0005);
-  const niftyITLive = useSimPrice(38247.65, 0.0006);
-  const niftyBKLive = useSimPrice(48923.40, 0.0005);
 
   return (
     <div className="p-6 space-y-6">
@@ -70,10 +52,17 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <LiveClock />
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 rounded-lg glass glass-hover text-sm text-gray-400 hover:text-white">
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {lastUpdated && (
+            <span className="text-xs text-gray-600">
+              Live · {new Date(lastUpdated).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            </span>
+          )}
+          <button onClick={() => window.location.reload()} className="flex items-center gap-2 px-4 py-2 rounded-lg glass glass-hover text-sm text-gray-400 hover:text-white">
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
       </motion.div>
 
       {/* Indices row */}
@@ -85,9 +74,10 @@ export default function DashboardPage() {
       >
         {INDICES.map((index, i) => {
           const chartData = i === 0 ? niftyChart : i === 1 ? sensexChart : generateIntraday(index.value);
-          const liveVal = i === 0 ? niftyLive : i === 1 ? sensexLive : i === 2 ? niftyITLive : niftyBKLive;
-          const liveChange = parseFloat((liveVal - index.prevClose).toFixed(2));
-          const livePct   = parseFloat(((liveChange / index.prevClose) * 100).toFixed(2));
+          const live = quotes[index.displayName];
+          const liveVal    = live?.price        ?? index.value;
+          const liveChange = live?.change       ?? index.change;
+          const livePct    = live?.changePercent ?? index.changePercent;
           const bull = livePct >= 0;
           return (
             <motion.div key={index.name} variants={item} className="glass rounded-xl p-4 glass-hover">
@@ -150,13 +140,16 @@ export default function DashboardPage() {
               </Link>
             </div>
             <div className="space-y-3">
-              {AI_RECS.map(({ symbol, name, reason, score, sentiment, change }) => (
+              {AI_RECS.map(({ symbol, name, reason, score, sentiment }) => {
+                const live = quotes[symbol];
+                const pct  = live?.changePercent ?? 0;
+                const bull = pct >= 0;
+                return (
                 <Link
                   key={symbol}
                   href={`/stock/${symbol}`}
                   className="flex items-center gap-4 p-3 rounded-xl bg-white/3 hover:bg-white/6 border border-border/50 hover:border-brand-purple/20 transition-all group"
                 >
-                  {/* AI Score */}
                   <div className="flex-shrink-0 text-center">
                     <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-brand-purple/30 to-brand-blue/30 flex items-center justify-center border border-brand-purple/20">
                       <span className="text-sm font-black text-brand-purple">{score}</span>
@@ -166,17 +159,21 @@ export default function DashboardPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-bold text-white">{symbol}</span>
-                      <span className="text-xs text-gray-500">{name}</span>
+                      {live && <span className="text-xs font-num text-gray-300">₹{live.price.toLocaleString("en-IN")}</span>}
+                      {!live && <span className="text-xs text-gray-500">{name}</span>}
                     </div>
                     <p className="text-xs text-gray-400 mt-0.5 truncate">{reason}</p>
                   </div>
                   <div className="flex-shrink-0 text-right">
-                    <p className="text-xs font-semibold text-market-bull">+{change.toFixed(2)}%</p>
-                    <p className="text-xs text-market-bull/60">{sentiment}</p>
+                    <p className={`text-xs font-semibold ${bull ? "text-market-bull" : "text-market-bear"}`}>
+                      {bull ? "+" : ""}{pct.toFixed(2)}%
+                    </p>
+                    <p className="text-xs text-gray-500">{sentiment}</p>
                   </div>
                   <ArrowRight className="w-4 h-4 text-gray-600 group-hover:text-brand-purple transition-colors flex-shrink-0" />
                 </Link>
-              ))}
+                );
+              })}
             </div>
           </motion.div>
 
@@ -194,19 +191,17 @@ export default function DashboardPage() {
                 <h2 className="text-sm font-bold text-white">Top Gainers</h2>
               </div>
               <div className="space-y-2">
-                {TOP_GAINERS.map(({ symbol, name, price, changePercent }) => (
-                  <Link
-                    key={symbol}
-                    href={`/stock/${symbol}`}
-                    className="flex items-center justify-between py-2 border-b border-border/50 last:border-0 hover:opacity-80 transition-opacity"
-                  >
-                    <div>
-                      <p className="text-sm font-semibold text-white">{symbol}</p>
-                      <p className="text-xs text-gray-500 truncate max-w-[120px]">{name}</p>
-                    </div>
+                {STOCKS
+                  .map((s) => ({ ...s, liveChange: quotes[s.symbol]?.changePercent ?? s.changePercent, livePrice: quotes[s.symbol]?.price ?? s.price }))
+                  .sort((a, b) => b.liveChange - a.liveChange)
+                  .slice(0, 4)
+                  .map(({ symbol, name, livePrice, liveChange }) => (
+                  <Link key={symbol} href={`/stock/${symbol}`}
+                    className="flex items-center justify-between py-2 border-b border-border/50 last:border-0 hover:opacity-80 transition-opacity">
+                    <div><p className="text-sm font-semibold text-white">{symbol}</p><p className="text-xs text-gray-500 truncate max-w-[120px]">{name}</p></div>
                     <div className="text-right">
-                      <p className="text-sm font-num font-semibold text-white">₹{price.toLocaleString("en-IN")}</p>
-                      <p className="text-xs font-num font-semibold text-market-bull">+{changePercent.toFixed(2)}%</p>
+                      <p className="text-sm font-num font-semibold text-white">₹{livePrice.toLocaleString("en-IN")}</p>
+                      <p className="text-xs font-num font-semibold text-market-bull">+{liveChange.toFixed(2)}%</p>
                     </div>
                   </Link>
                 ))}
@@ -225,19 +220,17 @@ export default function DashboardPage() {
                 <h2 className="text-sm font-bold text-white">Top Losers</h2>
               </div>
               <div className="space-y-2">
-                {TOP_LOSERS.map(({ symbol, name, price, changePercent }) => (
-                  <Link
-                    key={symbol}
-                    href={`/stock/${symbol}`}
-                    className="flex items-center justify-between py-2 border-b border-border/50 last:border-0 hover:opacity-80 transition-opacity"
-                  >
-                    <div>
-                      <p className="text-sm font-semibold text-white">{symbol}</p>
-                      <p className="text-xs text-gray-500 truncate max-w-[120px]">{name}</p>
-                    </div>
+                {STOCKS
+                  .map((s) => ({ ...s, liveChange: quotes[s.symbol]?.changePercent ?? s.changePercent, livePrice: quotes[s.symbol]?.price ?? s.price }))
+                  .sort((a, b) => a.liveChange - b.liveChange)
+                  .slice(0, 4)
+                  .map(({ symbol, name, livePrice, liveChange }) => (
+                  <Link key={symbol} href={`/stock/${symbol}`}
+                    className="flex items-center justify-between py-2 border-b border-border/50 last:border-0 hover:opacity-80 transition-opacity">
+                    <div><p className="text-sm font-semibold text-white">{symbol}</p><p className="text-xs text-gray-500 truncate max-w-[120px]">{name}</p></div>
                     <div className="text-right">
-                      <p className="text-sm font-num font-semibold text-white">₹{price.toLocaleString("en-IN")}</p>
-                      <p className="text-xs font-num font-semibold text-market-bear">{changePercent.toFixed(2)}%</p>
+                      <p className="text-sm font-num font-semibold text-white">₹{livePrice.toLocaleString("en-IN")}</p>
+                      <p className="text-xs font-num font-semibold text-market-bear">{liveChange.toFixed(2)}%</p>
                     </div>
                   </Link>
                 ))}
@@ -311,12 +304,13 @@ export default function DashboardPage() {
               <span className="text-xs text-gray-500">{watchlist.length} stocks</span>
             </div>
             <div className="space-y-1">
-              {watchlist.map(({ symbol, name, price, changePercent, aiScore }) => (
-                <Link
-                  key={symbol}
-                  href={`/stock/${symbol}`}
-                  className="flex items-center gap-3 px-2 py-2.5 rounded-lg hover:bg-white/5 transition-colors group"
-                >
+              {watchlist.map(({ symbol, name, price, changePercent, aiScore }) => {
+                const live = quotes[symbol];
+                const livePrice = live?.price ?? price;
+                const livePct   = live?.changePercent ?? changePercent;
+                return (
+                <Link key={symbol} href={`/stock/${symbol}`}
+                  className="flex items-center gap-3 px-2 py-2.5 rounded-lg hover:bg-white/5 transition-colors group">
                   <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-purple/30 to-brand-blue/30 flex items-center justify-center flex-shrink-0">
                     <span className="text-xs font-bold text-brand-purple">{symbol[0]}</span>
                   </div>
@@ -325,13 +319,14 @@ export default function DashboardPage() {
                     <p className="text-xs text-gray-600 truncate">{name}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs font-num font-semibold text-white">₹{price.toLocaleString("en-IN")}</p>
-                    <p className={`text-xs font-num ${changePercent >= 0 ? "text-market-bull" : "text-market-bear"}`}>
-                      {changePercent >= 0 ? "+" : ""}{changePercent.toFixed(2)}%
+                    <p className="text-xs font-num font-semibold text-white">₹{livePrice.toLocaleString("en-IN")}</p>
+                    <p className={`text-xs font-num ${livePct >= 0 ? "text-market-bull" : "text-market-bear"}`}>
+                      {livePct >= 0 ? "+" : ""}{livePct.toFixed(2)}%
                     </p>
                   </div>
                 </Link>
-              ))}
+                );
+              })}
             </div>
           </motion.div>
         </div>

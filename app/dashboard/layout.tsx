@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/shared/Sidebar";
 import { StockTicker } from "@/components/shared/StockTicker";
 import { NotificationSettings } from "@/components/shared/NotificationSettings";
 import { AlertScheduler } from "@/components/shared/AlertScheduler";
+import { LiveMarketInit } from "@/components/shared/LiveMarketInit";
 import { useUIStore } from "@/lib/store/store";
 import { motion } from "framer-motion";
 import { Search, User, Menu } from "lucide-react";
@@ -33,6 +34,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex h-screen bg-bg-primary overflow-hidden">
       <AlertScheduler />
+      <LiveMarketInit />
       <Sidebar />
 
       {/* Main content */}
