@@ -182,12 +182,26 @@ export interface LiveQuote {
   name?: string;
 }
 
+export interface LiveTechnicals {
+  rsi: number;
+  macd: number;
+  macdSignal: number;
+  ema20: number;
+  ema50: number;
+  ema200: number;
+  support: number;
+  resistance: number;
+  trend: string;
+}
+
 interface LiveMarketStore {
   quotes: Record<string, LiveQuote>;
+  technicals: Record<string, LiveTechnicals>;
   isLoading: boolean;
   error: string | null;
   lastUpdated: number | null;
   setQuotes: (q: Record<string, LiveQuote>) => void;
+  setTechnicals: (symbol: string, t: LiveTechnicals) => void;
   setLoading: (v: boolean) => void;
   setError: (e: string | null) => void;
   setLastUpdated: (ts: number) => void;
@@ -195,10 +209,12 @@ interface LiveMarketStore {
 
 export const useLiveMarketStore = create<LiveMarketStore>()((set) => ({
   quotes: {},
+  technicals: {},
   isLoading: true,
   error: null,
   lastUpdated: null,
   setQuotes: (quotes) => set({ quotes }),
+  setTechnicals: (symbol, t) => set((s) => ({ technicals: { ...s.technicals, [symbol]: t } })),
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
   setLastUpdated: (lastUpdated) => set({ lastUpdated }),
@@ -221,6 +237,7 @@ interface NotifStore {
   alerts: AlertConfig[];
   morningAlertEnabled: boolean;
   sellAlertEnabled: boolean;
+  chromeNotifEnabled: boolean;
   lastMorningAlertDate: string;
   setCredentials: (token: string, chatId: string) => void;
   setConnected: (v: boolean) => void;
@@ -229,6 +246,7 @@ interface NotifStore {
   toggleAlert: (id: string) => void;
   setMorningAlertEnabled: (v: boolean) => void;
   setSellAlertEnabled: (v: boolean) => void;
+  setChromeNotifEnabled: (v: boolean) => void;
   setLastMorningAlertDate: (date: string) => void;
 }
 
@@ -241,6 +259,7 @@ export const useNotifStore = create<NotifStore>()(
       alerts: [],
       morningAlertEnabled: true,
       sellAlertEnabled: true,
+      chromeNotifEnabled: false,
       lastMorningAlertDate: "",
       setCredentials: (token, chatId) => set({ telegramToken: token, telegramChatId: chatId }),
       setConnected: (v) => set({ connected: v }),
@@ -252,6 +271,7 @@ export const useNotifStore = create<NotifStore>()(
         })),
       setMorningAlertEnabled: (v) => set({ morningAlertEnabled: v }),
       setSellAlertEnabled: (v) => set({ sellAlertEnabled: v }),
+      setChromeNotifEnabled: (v) => set({ chromeNotifEnabled: v }),
       setLastMorningAlertDate: (date) => set({ lastMorningAlertDate: date }),
     }),
     { name: "trademind-notifications" }

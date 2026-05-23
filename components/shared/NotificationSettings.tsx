@@ -5,10 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Bell, BellOff, Send, CheckCircle2, XCircle, Loader2,
   Trash2, Plus, ChevronDown, ExternalLink, AlertCircle,
-  Sunrise, TrendingDown, Zap
+  Sunrise, TrendingDown, Zap, Monitor
 } from "lucide-react";
 import { toast } from "sonner";
-import { useNotifStore, usePortfolioStore, AlertConfig } from "@/lib/store/store";
+import { useNotifStore, usePortfolioStore, useLiveMarketStore, AlertConfig } from "@/lib/store/store";
 import { STOCKS } from "@/lib/data/mockData";
 import { getTopStockPicks, getSellSignals, getBuySignals, formatMorningBrief, formatSellAlert, formatBuyAlert } from "@/lib/alerts/alertEngine";
 
@@ -356,14 +356,38 @@ export function NotificationSettings() {
   const [open, setOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendingMorning, setSendingMorning] = useState(false);
+  const [chromePerm, setChromePerm] = useState<NotificationPermission>("default");
   const {
     telegramToken, telegramChatId, connected, alerts,
-    morningAlertEnabled, sellAlertEnabled, lastMorningAlertDate,
+    morningAlertEnabled, sellAlertEnabled, chromeNotifEnabled,
+    lastMorningAlertDate,
     setConnected, addAlert, removeAlert, toggleAlert,
     setCredentials, setMorningAlertEnabled, setSellAlertEnabled,
-    setLastMorningAlertDate,
+    setChromeNotifEnabled, setLastMorningAlertDate,
   } = useNotifStore();
   const { holdings, stats } = usePortfolioStore();
+  const { quotes, technicals } = useLiveMarketStore();
+
+  // Read current browser permission on open
+  useState(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setChromePerm(Notification.permission);
+    }
+  });
+
+  const handleChromeToggle = async (v: boolean) => {
+    if (!v) { setChromeNotifEnabled(false); return; }
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    const perm = await Notification.requestPermission();
+    setChromePerm(perm);
+    if (perm === "granted") {
+      setChromeNotifEnabled(true);
+      new Notification("TradeMind Alerts Active", {
+        body: "You'll now receive stock signals in Chrome/Android",
+        icon: "/icon-192.png",
+      });
+    }
+  };
 
   const sendTestAlert = async () => {
     setSending(true);
@@ -391,8 +415,8 @@ export function NotificationSettings() {
     setSendingMorning(true);
     try {
       const portfolioSymbols = holdings.map((h) => h.symbol);
-      const picks = getTopStockPicks(portfolioSymbols);
-      const sellSignals = getSellSignals(holdings);
+      const picks = getTopStockPicks(portfolioSymbols, quotes, technicals);
+      const sellSignals = getSellSignals(holdings, quotes, technicals);
       const portfolioValue = holdings.reduce((sum, h) => sum + h.currentValue, 0) + stats.cash;
       await sendTelegram(telegramToken, telegramChatId, formatMorningBrief(picks, portfolioValue, sellSignals));
       setLastMorningAlertDate(new Date().toISOString().split("T")[0]);
@@ -407,8 +431,8 @@ export function NotificationSettings() {
 
   const sendSellSignalsNow = async () => {
     const portfolioSymbols = holdings.map((h) => h.symbol);
-    const sellSignals = getSellSignals(holdings);
-    const buySignals = getBuySignals(portfolioSymbols);
+    const sellSignals = getSellSignals(holdings, quotes, technicals);
+    const buySignals = getBuySignals(portfolioSymbols, quotes, technicals);
 
     if (sellSignals.length === 0 && buySignals.length === 0) {
       toast("No signals right now — portfolio healthy, no new buy opportunities.");
@@ -581,6 +605,41 @@ export function NotificationSettings() {
                           </div>
                         )}
                       </div>
+                    </div>
+
+                    {/* Chrome / Android notifications */}
+                    <div className="p-4 rounded-xl bg-white/3 border border-border space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-brand-blue/15 flex items-center justify-center">
+                            <Monitor className="w-4 h-4 text-brand-blue" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-white">Chrome / Android Alerts</p>
+                            <p className="text-xs text-gray-500">
+                              {chromePerm === "granted"
+                                ? "Permission granted"
+                                : chromePerm === "denied"
+                                ? "Blocked — reset in browser settings"
+                                : "Click toggle to allow"}
+                            </p>
+                          </div>
+                        </div>
+                        <Toggle
+                          enabled={chromeNotifEnabled && chromePerm === "granted"}
+                          onChange={handleChromeToggle}
+                        />
+                      </div>
+                      {chromePerm === "denied" && (
+                        <p className="text-xs text-market-bear">
+                          Go to browser site settings → Notifications → Allow this site.
+                        </p>
+                      )}
+                      {chromePerm === "granted" && chromeNotifEnabled && (
+                        <p className="text-xs text-market-bull">
+                          Active — alerts appear even when TradeMind is in background.
+                        </p>
+                      )}
                     </div>
 
                     {/* Manual alerts list */}

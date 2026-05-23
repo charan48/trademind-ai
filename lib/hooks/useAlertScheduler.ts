@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useNotifStore, usePortfolioStore } from "@/lib/store/store";
+import { useNotifStore, usePortfolioStore, useLiveMarketStore } from "@/lib/store/store";
 import {
   getTopStockPicks,
   getSellSignals,
@@ -22,25 +22,34 @@ async function sendTg(token: string, chatId: string, message: string) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token, chatId, message }),
     });
-  } catch {
-    // silent — background scheduler
-  }
+  } catch { /* silent */ }
+}
+
+function sendChromeNotif(title: string, body: string, enabled: boolean) {
+  if (!enabled) return;
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  try {
+    new Notification(title, { body, icon: "/icon-192.png", badge: "/icon-192.png" });
+  } catch { /* some browsers block in certain contexts */ }
 }
 
 export function useAlertScheduler() {
   const {
     telegramToken, telegramChatId, connected,
-    morningAlertEnabled, sellAlertEnabled,
+    morningAlertEnabled, sellAlertEnabled, chromeNotifEnabled,
     lastMorningAlertDate, setLastMorningAlertDate,
   } = useNotifStore();
   const { holdings, stats } = usePortfolioStore();
+  const { quotes, technicals } = useLiveMarketStore();
 
-  // Deduplicate sell/buy alerts per symbol per day within session
   const sentSell = useRef<Set<string>>(new Set());
   const sentBuy  = useRef<Set<string>>(new Set());
 
+  const canNotify = connected && (telegramToken && telegramChatId || chromeNotifEnabled);
+
   useEffect(() => {
-    if (!connected || !telegramToken || !telegramChatId) return;
+    if (!canNotify) return;
 
     const tick = async () => {
       const now = new Date();
@@ -49,7 +58,7 @@ export function useAlertScheduler() {
       const isWeekday = day >= 1 && day <= 5;
       const mins = now.getHours() * 60 + now.getMinutes();
 
-      // ── Morning brief (picks + portfolio sell alerts bundled) ──
+      // ── Morning brief ──────────────────────────────────────────────────────
       if (
         morningAlertEnabled &&
         isWeekday &&
@@ -58,32 +67,54 @@ export function useAlertScheduler() {
         lastMorningAlertDate !== todayStr
       ) {
         const portfolioSymbols = holdings.map((h) => h.symbol);
-        const picks = getTopStockPicks(portfolioSymbols);
-        const sellSignals = getSellSignals(holdings);
+        const picks       = getTopStockPicks(portfolioSymbols, quotes, technicals);
+        const sellSignals = getSellSignals(holdings, quotes, technicals);
         const portfolioValue = holdings.reduce((sum, h) => sum + h.currentValue, 0) + stats.cash;
-        await sendTg(telegramToken, telegramChatId, formatMorningBrief(picks, portfolioValue, sellSignals));
+        const message = formatMorningBrief(picks, portfolioValue, sellSignals);
+
+        if (telegramToken && telegramChatId) {
+          await sendTg(telegramToken, telegramChatId, message);
+        }
+        sendChromeNotif(
+          "📊 TradeMind Morning Brief",
+          `Top picks: ${picks.map((p) => p.symbol).join(", ")} · Portfolio ₹${portfolioValue.toLocaleString("en-IN")}`,
+          chromeNotifEnabled
+        );
         setLastMorningAlertDate(todayStr);
       }
 
-      // ── Portfolio sell signals (live monitoring) ──
+      // ── Portfolio sell + buy signals ───────────────────────────────────────
       if (sellAlertEnabled && holdings.length > 0) {
         const heldSymbols = holdings.map((h) => h.symbol);
-        const signals = getSellSignals(holdings);
+        const signals = getSellSignals(holdings, quotes, technicals);
         for (const s of signals) {
           const key = `sell-${s.symbol}-${todayStr}`;
           if (!sentSell.current.has(key)) {
             sentSell.current.add(key);
-            await sendTg(telegramToken, telegramChatId, formatSellAlert(s));
+            if (telegramToken && telegramChatId) {
+              await sendTg(telegramToken, telegramChatId, formatSellAlert(s));
+            }
+            sendChromeNotif(
+              `${s.urgency === "HIGH" ? "🚨" : "⚠️"} SELL: ${s.symbol}`,
+              s.reason,
+              chromeNotifEnabled
+            );
           }
         }
 
-        // ── Buy opportunities for non-portfolio stocks ──
-        const buySignals = getBuySignals(heldSymbols);
+        const buySignals = getBuySignals(heldSymbols, quotes, technicals);
         for (const b of buySignals) {
           const key = `buy-${b.symbol}-${todayStr}`;
           if (!sentBuy.current.has(key)) {
             sentBuy.current.add(key);
-            await sendTg(telegramToken, telegramChatId, formatBuyAlert(b));
+            if (telegramToken && telegramChatId) {
+              await sendTg(telegramToken, telegramChatId, formatBuyAlert(b));
+            }
+            sendChromeNotif(
+              `${b.confidence === "HIGH" ? "🟢" : "🔵"} BUY: ${b.symbol}`,
+              b.reason,
+              chromeNotifEnabled
+            );
           }
         }
       }
@@ -93,8 +124,9 @@ export function useAlertScheduler() {
     const id = setInterval(tick, TICK_MS);
     return () => clearInterval(id);
   }, [
-    connected, telegramToken, telegramChatId,
-    morningAlertEnabled, sellAlertEnabled,
+    canNotify, connected, telegramToken, telegramChatId,
+    morningAlertEnabled, sellAlertEnabled, chromeNotifEnabled,
     holdings, stats.cash, lastMorningAlertDate, setLastMorningAlertDate,
+    quotes, technicals,
   ]);
 }

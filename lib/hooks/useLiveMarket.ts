@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useCallback, useRef } from "react";
-import { useLiveMarketStore, LiveQuote } from "@/lib/store/store";
+import { useLiveMarketStore, LiveQuote, LiveTechnicals } from "@/lib/store/store";
+import { STOCK_SYMBOLS } from "@/lib/market/symbols";
 
-const REFRESH_OPEN   = 30_000;       // 30s during market hours
-const REFRESH_CLOSED = 5 * 60_000;   // 5 min outside hours
+const REFRESH_OPEN    = 30_000;           // 30s during market hours
+const REFRESH_CLOSED  = 5 * 60_000;       // 5 min outside hours
+const TECH_REFRESH_MS = 6 * 60 * 60_000;  // 6h
 
 function isMarketHours(): boolean {
   const d = new Date();
@@ -14,9 +16,12 @@ function isMarketHours(): boolean {
   return mins >= 9 * 60 + 15 && mins < 15 * 60 + 30;
 }
 
+const ALL_STOCK_SYMBOLS = Object.keys(STOCK_SYMBOLS);
+
 export function useLiveMarket() {
-  const { setQuotes, setLoading, setError, setLastUpdated } = useLiveMarketStore();
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const { setQuotes, setTechnicals, setLoading, setError, setLastUpdated } = useLiveMarketStore();
+  const timerRef     = useRef<NodeJS.Timeout | null>(null);
+  const techTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchQuotes = useCallback(async () => {
     try {
@@ -36,9 +41,24 @@ export function useLiveMarket() {
     }
   }, [setQuotes, setLoading, setError, setLastUpdated]);
 
+  const fetchTechnicals = useCallback(async () => {
+    await Promise.allSettled(
+      ALL_STOCK_SYMBOLS.map(async (sym) => {
+        try {
+          const res = await fetch(`/api/market/chart/${sym}?range=6mo`, { cache: "no-store" });
+          const data = await res.json();
+          if (data.ok && data.technicals) {
+            setTechnicals(sym, data.technicals as LiveTechnicals);
+          }
+        } catch { /* silent */ }
+      })
+    );
+  }, [setTechnicals]);
+
   useEffect(() => {
     setLoading(true);
     fetchQuotes();
+    fetchTechnicals();
 
     const schedule = () => {
       const delay = isMarketHours() ? REFRESH_OPEN : REFRESH_CLOSED;
@@ -46,6 +66,11 @@ export function useLiveMarket() {
     };
     schedule();
 
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [fetchQuotes, setLoading]);
+    techTimerRef.current = setInterval(fetchTechnicals, TECH_REFRESH_MS);
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (techTimerRef.current) clearInterval(techTimerRef.current);
+    };
+  }, [fetchQuotes, fetchTechnicals, setLoading]);
 }

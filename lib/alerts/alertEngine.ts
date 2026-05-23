@@ -40,56 +40,76 @@ export interface BuySignal {
   confidence: "HIGH" | "MEDIUM";
 }
 
+// Minimal live data shapes — compatible with LiveQuote/LiveTechnicals from store
+export interface LiveQuoteInput {
+  price: number;
+  changePercent: number;
+}
+export interface LiveTechInput {
+  rsi: number;
+  macd: number;
+  macdSignal: number;
+  ema20: number;
+  ema50: number;
+  support: number;
+  resistance: number;
+}
+
 // ── Buy opportunity scanner ───────────────────────────────────────────────────
-export function getBuySignals(excludeSymbols: string[] = []): BuySignal[] {
+export function getBuySignals(
+  excludeSymbols: string[] = [],
+  liveQuotes?: Record<string, LiveQuoteInput>,
+  liveTech?: Record<string, LiveTechInput>
+): BuySignal[] {
   const signals: BuySignal[] = [];
 
   for (const s of STOCKS) {
     if (excludeSymbols.includes(s.symbol)) continue;
 
+    const price      = liveQuotes?.[s.symbol]?.price         ?? s.price;
+    const rsi        = liveTech?.[s.symbol]?.rsi             ?? s.rsi;
+    const macd       = liveTech?.[s.symbol]?.macd            ?? s.macd;
+    const macdSignal = liveTech?.[s.symbol]?.macdSignal      ?? s.macdSignal;
+    const support    = liveTech?.[s.symbol]?.support         ?? s.technicals?.support    ?? 0;
+    const resistance = liveTech?.[s.symbol]?.resistance      ?? s.technicals?.resistance ?? 0;
+    const ema20      = liveTech?.[s.symbol]?.ema20           ?? s.ema20;
+    const ema50      = liveTech?.[s.symbol]?.ema50           ?? s.ema50;
+
     const reasons: string[] = [];
     let confidence: "HIGH" | "MEDIUM" = "MEDIUM";
 
-    // RSI oversold
-    const rsiOversold = s.rsi < 40;
-    if (rsiOversold) reasons.push(`RSI ${s.rsi.toFixed(0)} — oversold, reversal likely`);
+    const rsiOversold = rsi < 40;
+    if (rsiOversold) reasons.push(`RSI ${rsi.toFixed(0)} — oversold, reversal likely`);
 
-    // MACD bullish crossover (macd > macdSignal)
-    const macdBull = s.macd > s.macdSignal;
+    const macdBull = macd > macdSignal;
     if (macdBull) reasons.push("MACD bullish crossover");
 
-    // Price near support (within 3%)
-    const support = s.technicals?.support ?? 0;
-    const nearSupport = support > 0 && ((s.price - support) / support) < 0.03;
+    const nearSupport = support > 0 && ((price - support) / support) < 0.03;
     if (nearSupport) reasons.push(`Price near support ₹${support.toLocaleString("en-IN")}`);
 
-    // Strong AI score
     const strongAI = s.aiScore >= 80;
     if (strongAI) reasons.push(`AI Score ${s.aiScore}/100 — strongly bullish`);
 
-    // Price above EMA20 and EMA50 (uptrend confirmation)
-    const uptrend = s.ema20 && s.ema50 && s.price > s.ema20 && s.ema20 > s.ema50;
+    const uptrend = ema20 && ema50 && price > ema20 && ema20 > ema50;
     if (uptrend) reasons.push("Price above EMA20 > EMA50 — uptrend confirmed");
 
-    // Need at least 2 signals to qualify
     if (reasons.length < 2) continue;
 
-    // HIGH confidence = 3+ signals OR (RSI oversold + strong AI)
     if (reasons.length >= 3 || (rsiOversold && strongAI) || (macdBull && nearSupport)) {
       confidence = "HIGH";
     }
 
-    const target = parseFloat((s.price * 1.12).toFixed(2));   // 12% target
-    const stopLoss = parseFloat((s.price * 0.93).toFixed(2)); // 7% stop loss
+    const target   = parseFloat((price * 1.12).toFixed(2));
+    const stopLoss = parseFloat((price * 0.93).toFixed(2));
 
     signals.push({
       symbol: s.symbol,
       name: s.name,
-      price: s.price,
-      rsi: s.rsi,
+      price,
+      rsi,
       aiScore: s.aiScore,
       reason: reasons.slice(0, 2).join(" · "),
-      entryZone: `₹${(s.price * 0.99).toLocaleString("en-IN")} – ₹${(s.price * 1.01).toLocaleString("en-IN")}`,
+      entryZone: `₹${(price * 0.99).toLocaleString("en-IN")} – ₹${(price * 1.01).toLocaleString("en-IN")}`,
       target,
       stopLoss,
       confidence,
@@ -100,118 +120,107 @@ export function getBuySignals(excludeSymbols: string[] = []): BuySignal[] {
 }
 
 // ── Morning top picks ─────────────────────────────────────────────────────────
-export function getTopStockPicks(excludeSymbols: string[] = []): StockPick[] {
+export function getTopStockPicks(
+  excludeSymbols: string[] = [],
+  liveQuotes?: Record<string, LiveQuoteInput>,
+  liveTech?: Record<string, LiveTechInput>
+): StockPick[] {
   return STOCKS
     .filter((s) => !excludeSymbols.includes(s.symbol))
     .sort((a, b) => b.aiScore - a.aiScore)
     .slice(0, 3)
     .map((s) => {
-      const support = s.technicals?.support ?? 0;
-      const resistance = s.technicals?.resistance ?? 0;
+      const price        = liveQuotes?.[s.symbol]?.price         ?? s.price;
+      const changePercent = liveQuotes?.[s.symbol]?.changePercent ?? s.changePercent;
+      const rsi          = liveTech?.[s.symbol]?.rsi             ?? s.rsi;
+      const support      = liveTech?.[s.symbol]?.support         ?? s.technicals?.support    ?? 0;
+      const resistance   = liveTech?.[s.symbol]?.resistance      ?? s.technicals?.resistance ?? 0;
+
       return {
         symbol: s.symbol,
         name: s.name,
-        price: s.price,
+        price,
         aiScore: s.aiScore,
         sentiment: s.sentiment,
-        rsi: s.rsi,
-        changePercent: s.changePercent,
+        rsi,
+        changePercent,
         reason:
           s.aiScore >= 80
             ? "Strong AI bullish signal + price momentum"
-            : s.rsi < 45
+            : rsi < 45
             ? "Oversold — potential reversal entry"
             : "Positive sector outlook + technical strength",
         entryZone:
           support > 0
             ? `₹${support.toLocaleString("en-IN")} – ₹${(support * 1.02).toLocaleString("en-IN")}`
-            : `Near ₹${s.price.toLocaleString("en-IN")}`,
-        target: resistance > 0 ? resistance : parseFloat((s.price * 1.1).toFixed(2)),
-        stopLoss: parseFloat((s.price * 0.93).toFixed(2)),
+            : `Near ₹${price.toLocaleString("en-IN")}`,
+        target:   resistance > 0 ? resistance : parseFloat((price * 1.1).toFixed(2)),
+        stopLoss: parseFloat((price * 0.93).toFixed(2)),
       };
     });
 }
 
 // ── Portfolio sell signal scanner ─────────────────────────────────────────────
-export function getSellSignals(holdings: PortfolioHolding[]): SellSignal[] {
+export function getSellSignals(
+  holdings: PortfolioHolding[],
+  liveQuotes?: Record<string, LiveQuoteInput>,
+  liveTech?: Record<string, LiveTechInput>
+): SellSignal[] {
   const signals: SellSignal[] = [];
 
   for (const h of holdings) {
     const stock = STOCKS.find((s) => s.symbol === h.symbol);
     if (!stock) continue;
 
-    const pnlPct = ((stock.price - h.avgBuyPrice) / h.avgBuyPrice) * 100;
-    const resistance = stock.technicals?.resistance ?? 0;
+    const price      = liveQuotes?.[h.symbol]?.price    ?? stock.price;
+    const rsi        = liveTech?.[h.symbol]?.rsi        ?? stock.rsi;
+    const macd       = liveTech?.[h.symbol]?.macd       ?? stock.macd;
+    const macdSig    = liveTech?.[h.symbol]?.macdSignal ?? stock.macdSignal;
+    const resistance = liveTech?.[h.symbol]?.resistance ?? stock.technicals?.resistance ?? 0;
 
-    // 1. RSI overbought
-    if (stock.rsi > 72) {
+    const pnlPct = ((price - h.avgBuyPrice) / h.avgBuyPrice) * 100;
+
+    if (rsi > 72) {
       signals.push({
-        symbol: h.symbol,
-        name: h.name,
-        currentPrice: stock.price,
-        avgBuyPrice: h.avgBuyPrice,
-        pnlPercent: pnlPct,
-        rsi: stock.rsi,
-        reason: `RSI ${stock.rsi.toFixed(0)} — overbought, momentum likely to reverse`,
-        urgency: stock.rsi > 80 ? "HIGH" : "MEDIUM",
+        symbol: h.symbol, name: h.name,
+        currentPrice: price, avgBuyPrice: h.avgBuyPrice,
+        pnlPercent: pnlPct, rsi,
+        reason: `RSI ${rsi.toFixed(0)} — overbought, momentum likely to reverse`,
+        urgency: rsi > 80 ? "HIGH" : "MEDIUM",
         action: pnlPct > 0 ? "Book partial profits (50%)" : "Exit to limit losses",
       });
-    }
-
-    // 2. Stop-loss: down 8%
-    else if (pnlPct < -8) {
+    } else if (pnlPct < -8) {
       signals.push({
-        symbol: h.symbol,
-        name: h.name,
-        currentPrice: stock.price,
-        avgBuyPrice: h.avgBuyPrice,
-        pnlPercent: pnlPct,
-        rsi: stock.rsi,
+        symbol: h.symbol, name: h.name,
+        currentPrice: price, avgBuyPrice: h.avgBuyPrice,
+        pnlPercent: pnlPct, rsi,
         reason: `Stop-loss triggered — down ${Math.abs(pnlPct).toFixed(1)}% from avg buy`,
         urgency: "HIGH",
         action: "Exit position immediately to limit loss",
       });
-    }
-
-    // 3. Near resistance with weak AI score
-    else if (resistance > 0 && stock.price >= resistance * 0.98 && stock.aiScore < 65) {
+    } else if (resistance > 0 && price >= resistance * 0.98 && stock.aiScore < 65) {
       signals.push({
-        symbol: h.symbol,
-        name: h.name,
-        currentPrice: stock.price,
-        avgBuyPrice: h.avgBuyPrice,
-        pnlPercent: pnlPct,
-        rsi: stock.rsi,
+        symbol: h.symbol, name: h.name,
+        currentPrice: price, avgBuyPrice: h.avgBuyPrice,
+        pnlPercent: pnlPct, rsi,
         reason: `Price near resistance ₹${resistance.toLocaleString("en-IN")} — AI score weakening`,
         urgency: "MEDIUM",
         action: pnlPct > 5 ? "Book profits at resistance" : "Watch closely, set stop",
       });
-    }
-
-    // 4. Profit target 15%+ with weakening momentum
-    else if (pnlPct > 15 && stock.aiScore < 65) {
+    } else if (pnlPct > 15 && stock.aiScore < 65) {
       signals.push({
-        symbol: h.symbol,
-        name: h.name,
-        currentPrice: stock.price,
-        avgBuyPrice: h.avgBuyPrice,
-        pnlPercent: pnlPct,
-        rsi: stock.rsi,
+        symbol: h.symbol, name: h.name,
+        currentPrice: price, avgBuyPrice: h.avgBuyPrice,
+        pnlPercent: pnlPct, rsi,
         reason: `Up ${pnlPct.toFixed(1)}% — AI momentum weakening, consider booking`,
         urgency: "MEDIUM",
         action: "Book 50–75% profits, trail stop on remainder",
       });
-    }
-
-    // 5. MACD bearish crossover while in profit
-    else if (stock.macd < stock.macdSignal && pnlPct > 3) {
+    } else if (macd < macdSig && pnlPct > 3) {
       signals.push({
-        symbol: h.symbol,
-        name: h.name,
-        currentPrice: stock.price,
-        avgBuyPrice: h.avgBuyPrice,
-        pnlPercent: pnlPct,
-        rsi: stock.rsi,
+        symbol: h.symbol, name: h.name,
+        currentPrice: price, avgBuyPrice: h.avgBuyPrice,
+        pnlPercent: pnlPct, rsi,
         reason: "MACD bearish crossover — selling pressure building",
         urgency: "MEDIUM",
         action: "Tighten stop-loss, prepare to exit if continues",
@@ -222,7 +231,7 @@ export function getSellSignals(holdings: PortfolioHolding[]): SellSignal[] {
   return signals;
 }
 
-// ── Portfolio health check (hold/watch status) ────────────────────────────────
+// ── Portfolio health check ────────────────────────────────────────────────────
 export interface HoldingStatus {
   symbol: string;
   name: string;
@@ -232,20 +241,28 @@ export interface HoldingStatus {
   note: string;
 }
 
-export function getPortfolioHealth(holdings: PortfolioHolding[]): HoldingStatus[] {
+export function getPortfolioHealth(
+  holdings: PortfolioHolding[],
+  liveQuotes?: Record<string, LiveQuoteInput>,
+  liveTech?: Record<string, LiveTechInput>
+): HoldingStatus[] {
   return holdings.map((h) => {
     const stock = STOCKS.find((s) => s.symbol === h.symbol);
     if (!stock) return { symbol: h.symbol, name: h.name, pnlPercent: 0, rsi: 0, status: "HOLD" as const, note: "Data unavailable" };
 
-    const pnlPct = ((stock.price - h.avgBuyPrice) / h.avgBuyPrice) * 100;
+    const price  = liveQuotes?.[h.symbol]?.price    ?? stock.price;
+    const rsi    = liveTech?.[h.symbol]?.rsi        ?? stock.rsi;
+    const macd   = liveTech?.[h.symbol]?.macd       ?? stock.macd;
+    const macdSig = liveTech?.[h.symbol]?.macdSignal ?? stock.macdSignal;
+    const pnlPct = ((price - h.avgBuyPrice) / h.avgBuyPrice) * 100;
 
-    if (stock.rsi > 72 || pnlPct < -8) {
-      return { symbol: h.symbol, name: h.name, pnlPercent: pnlPct, rsi: stock.rsi, status: "SELL", note: "Sell signal active" };
+    if (rsi > 72 || pnlPct < -8) {
+      return { symbol: h.symbol, name: h.name, pnlPercent: pnlPct, rsi, status: "SELL", note: "Sell signal active" };
     }
-    if (stock.rsi > 60 || (stock.macd < stock.macdSignal && pnlPct > 3)) {
-      return { symbol: h.symbol, name: h.name, pnlPercent: pnlPct, rsi: stock.rsi, status: "WATCH", note: "Monitor closely" };
+    if (rsi > 60 || (macd < macdSig && pnlPct > 3)) {
+      return { symbol: h.symbol, name: h.name, pnlPercent: pnlPct, rsi, status: "WATCH", note: "Monitor closely" };
     }
-    return { symbol: h.symbol, name: h.name, pnlPercent: pnlPct, rsi: stock.rsi, status: "HOLD", note: "Looking good, hold position" };
+    return { symbol: h.symbol, name: h.name, pnlPercent: pnlPct, rsi, status: "HOLD", note: "Looking good, hold position" };
   });
 }
 
@@ -261,7 +278,7 @@ export function formatMorningBrief(
 
   const pickLines = picks.map((p, i) => {
     const arrow = p.changePercent >= 0 ? "📈" : "📉";
-    const sign = p.changePercent >= 0 ? "+" : "";
+    const sign  = p.changePercent >= 0 ? "+" : "";
     return (
       `\n${i + 1}. ${arrow} <b>${p.symbol}</b> — ₹${p.price.toLocaleString("en-IN")}\n` +
       `   AI: <b>${p.aiScore}/100</b> | RSI: ${p.rsi.toFixed(0)} | ${sign}${p.changePercent.toFixed(2)}%\n` +
@@ -288,7 +305,7 @@ export function formatMorningBrief(
 }
 
 export function formatSellAlert(signal: SellSignal): string {
-  const emoji = signal.urgency === "HIGH" ? "🚨" : "⚠️";
+  const emoji   = signal.urgency === "HIGH" ? "🚨" : "⚠️";
   const pnlSign = signal.pnlPercent >= 0 ? "+" : "";
   return (
     `${emoji} <b>SELL SIGNAL — ${signal.symbol}</b>\n\n` +
