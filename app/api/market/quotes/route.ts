@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ALL_YF, fromYF } from "@/lib/market/symbols";
 
-// Yahoo v7 quote endpoint is rate-limited/blocked.
-// v8 chart endpoint works — extract quote data from chart meta.
+// Yahoo v7 blocked. Use v8/chart — extract OHLCV from actual candle data
+// so prev-close and open are correct even when market is closed.
 async function fetchQuoteViaChart(yfSymbol: string): Promise<Record<string, unknown> | null> {
   const headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -15,28 +15,45 @@ async function fetchQuoteViaChart(yfSymbol: string): Promise<Record<string, unkn
       const res = await fetch(url, { headers, cache: "no-store" });
       if (!res.ok) continue;
       const data = await res.json();
-      const meta = data?.chart?.result?.[0]?.meta;
-      if (!meta) continue;
+      const result = data?.chart?.result?.[0];
+      if (!result) continue;
 
-      const sym = fromYF(yfSymbol);
-      const prevClose = meta.chartPreviousClose ?? meta.regularMarketPreviousClose ?? 0;
-      const price     = meta.regularMarketPrice ?? 0;
-      const change    = price - prevClose;
-      const changePct = prevClose > 0 ? (change / prevClose) * 100 : 0;
+      const meta  = result.meta;
+      const q     = result.indicators?.quote?.[0] ?? {};
+      const closes: number[] = (q.close  ?? []).filter((v: number | null) => v != null);
+      const opens:  number[] = (q.open   ?? []).filter((v: number | null) => v != null);
+      const highs:  number[] = (q.high   ?? []).filter((v: number | null) => v != null);
+      const lows:   number[] = (q.low    ?? []).filter((v: number | null) => v != null);
+      const vols:   number[] = (q.volume ?? []).filter((v: number | null) => v != null);
+
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const sym   = fromYF(yfSymbol);
+      // Latest candle = most recent trading day
+      const price     = r2(closes.at(-1) ?? meta.regularMarketPrice ?? 0);
+      const prevClose = r2(closes.at(-2) ?? meta.chartPreviousClose ?? 0); // true previous day
+      const open      = r2(opens.at(-1)  ?? meta.regularMarketOpen  ?? 0);
+      const dayHigh   = r2(highs.at(-1)  ?? meta.regularMarketDayHigh ?? 0);
+      const dayLow    = r2(lows.at(-1)   ?? meta.regularMarketDayLow  ?? 0);
+      const volume    = vols.at(-1) ?? meta.regularMarketVolume ?? 0;
+
+      // During live session meta has real-time price; prefer it
+      const livePrice = r2(meta.regularMarketPrice ?? price);
+      const change    = r2(livePrice - prevClose);
+      const changePct = prevClose > 0 ? Math.round((change / prevClose) * 10000) / 100 : 0;
 
       return {
         symbol: sym,
-        price,
+        price:         livePrice,
         change,
-        changePercent: meta.regularMarketChangePercent ?? changePct,
-        volume:    meta.regularMarketVolume    ?? 0,
-        marketCap: meta.marketCap              ?? 0,
-        pe:        meta.trailingPE             ?? 0,
-        high52w:   meta.fiftyTwoWeekHigh       ?? 0,
-        low52w:    meta.fiftyTwoWeekLow        ?? 0,
-        open:      meta.regularMarketOpen      ?? 0,
-        dayHigh:   meta.regularMarketDayHigh   ?? 0,
-        dayLow:    meta.regularMarketDayLow    ?? 0,
+        changePercent: changePct,
+        volume,
+        marketCap: meta.marketCap        ?? 0,
+        pe:        meta.trailingPE       ?? 0,
+        high52w:   meta.fiftyTwoWeekHigh ?? 0,
+        low52w:    meta.fiftyTwoWeekLow  ?? 0,
+        open,
+        dayHigh,
+        dayLow,
         prevClose,
         name: meta.shortName ?? meta.longName ?? sym,
       };
@@ -46,7 +63,7 @@ async function fetchQuoteViaChart(yfSymbol: string): Promise<Record<string, unkn
 }
 
 export async function GET(req: NextRequest) {
-  const param = req.nextUrl.searchParams.get("symbols");
+  const param    = req.nextUrl.searchParams.get("symbols");
   const yfSymbols = param ? param.split(",") : ALL_YF;
 
   const results = await Promise.allSettled(
