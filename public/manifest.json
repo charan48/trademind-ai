@@ -1,0 +1,37 @@
+{
+  "name": "TradeMind AI",
+  "short_name": "TradeMind",
+  "description": "AI-powered stock market platform for Indian markets",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#080B14",
+  "theme_color": "#8B5CF6",
+  "categories": ["finance", "utilities"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "url": "/dashboard",
+      "description": "Open market dashboard"
+    },
+    {
+      "name": "Portfolio",
+      "url": "/dashboard/portfolio",
+      "description": "View portfolio"
+    },
+    {
+      "name": "AI Assistant",
+      "url": "/dashboard/ai",
+      "description": "Ask AI about stocks"
+    }
+  ]
+}
