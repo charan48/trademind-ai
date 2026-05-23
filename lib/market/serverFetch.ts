@@ -1,4 +1,4 @@
-import { STOCK_SYMBOLS, fromYF } from "@/lib/market/symbols";
+import { STOCK_SYMBOLS } from "@/lib/market/symbols";
 import { calcRSI, calcMACD, calcEMA, lastValid } from "@/lib/market/calculations";
 import type { LiveQuoteInput, LiveTechInput } from "@/lib/alerts/alertEngine";
 
@@ -7,26 +7,33 @@ const YF_FIELDS = [
 ].join(",");
 
 export async function fetchLiveQuotesServer(): Promise<Record<string, LiveQuoteInput>> {
-  const yfSymbols = Object.values(STOCK_SYMBOLS).join(",");
-  try {
-    const res = await fetch(
-      `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yfSymbols}&fields=${YF_FIELDS}`,
-      { headers: { "User-Agent": "Mozilla/5.0" }, cache: "no-store" }
-    );
-    if (!res.ok) throw new Error(`${res.status}`);
-    const data = await res.json();
-    const result: Record<string, LiveQuoteInput> = {};
-    for (const q of (data.quoteResponse?.result ?? [])) {
-      const sym = fromYF(q.symbol as string);
-      result[sym] = {
-        price: (q.regularMarketPrice as number) ?? 0,
-        changePercent: (q.regularMarketChangePercent as number) ?? 0,
-      };
+  const entries = Object.entries(STOCK_SYMBOLS);
+  const results = await Promise.allSettled(
+    entries.map(async ([sym, yfSym]) => {
+      for (const host of ["query1", "query2"]) {
+        try {
+          const res = await fetch(
+            `https://${host}.finance.yahoo.com/v8/finance/chart/${yfSym}?interval=1d&range=5d`,
+            { headers: { "User-Agent": "Mozilla/5.0" }, cache: "no-store" }
+          );
+          if (!res.ok) continue;
+          const data = await res.json();
+          const meta = data?.chart?.result?.[0]?.meta;
+          if (!meta) continue;
+          return { sym, price: meta.regularMarketPrice ?? 0, changePercent: meta.regularMarketChangePercent ?? 0 };
+        } catch { continue; }
+      }
+      return null;
+    })
+  );
+
+  const result: Record<string, LiveQuoteInput> = {};
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) {
+      result[r.value.sym] = { price: r.value.price, changePercent: r.value.changePercent };
     }
-    return result;
-  } catch {
-    return {};
   }
+  return result;
 }
 
 export async function fetchAllTechnicalsServer(): Promise<Record<string, LiveTechInput>> {
