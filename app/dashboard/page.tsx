@@ -10,23 +10,14 @@ import { ClientOnly } from "@/components/shared/ClientOnly";
 import { formatINR, formatPercent, getSentimentColor } from "@/lib/utils";
 import { generateIntraday } from "@/lib/utils";
 import { LiveClock } from "@/components/shared/LiveClock";
+import { computeAIScore as calcAIScore } from "@/lib/market/calculations";
 
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.06 } } };
 const item = { hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.4 } } };
 
-// ── Live AI score computed from real technicals ───────────────────────────────
+// ── Live AI score — delegate to shared canonical formula ─────────────────────
 function computeAIScore(lt: LiveTechnicals, price: number): number {
-  let score = 50;
-  if (lt.rsi < 30) score += 20; else if (lt.rsi < 40) score += 12;
-  else if (lt.rsi < 50) score += 5; else if (lt.rsi > 80) score -= 15;
-  else if (lt.rsi > 70) score -= 10; else if (lt.rsi > 60) score -= 3;
-  if (lt.macd > lt.macdSignal) score += 12; else score -= 8;
-  if (lt.ema20 > 0) { if (price > lt.ema20) score += 8; else score -= 6; }
-  if (lt.ema50 > 0) { if (price > lt.ema50) score += 8; else score -= 6; }
-  if (lt.ema200 > 0) { if (price > lt.ema200) score += 8; else score -= 6; }
-  if (lt.trend === "Uptrend") score += 5; else if (lt.trend === "Downtrend") score -= 5;
-  if (lt.support > 0 && price > 0 && (price - lt.support) / lt.support < 0.03) score += 7;
-  return Math.max(5, Math.min(100, Math.round(score)));
+  return calcAIScore({ rsi: lt.rsi, macd: lt.macd, macdSignal: lt.macdSignal, ema20: lt.ema20, ema50: lt.ema50, ema200: lt.ema200, trend: lt.trend, support: lt.support }, price);
 }
 
 function buildReason(lt: LiveTechnicals, price: number, stockName: string): string {

@@ -392,14 +392,26 @@ export function NotificationSettings() {
   const sendTestAlert = async () => {
     setSending(true);
     try {
+      // Build test alert from live quotes — no hardcoded values
+      const liveLines = STOCKS.slice(0, 3).map((s) => {
+        const lq = quotes[s.symbol];
+        const price = lq?.price ?? s.price;
+        const changePct = lq?.changePercent ?? s.changePercent;
+        const bull = changePct >= 0;
+        return `${bull ? "🟢" : "🔴"} ${s.symbol}: <b>₹${price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</b> (${bull ? "+" : ""}${changePct.toFixed(2)}%)`;
+      }).join("\n");
+
+      const livePortfolioValue = holdings.reduce((sum, h) => {
+        const lq = quotes[h.symbol];
+        return sum + (lq?.price ?? h.currentPrice) * h.quantity;
+      }, 0) + stats.cash;
+
       await sendTelegram(
         telegramToken,
         telegramChatId,
-        `📊 <b>TradeMind AI — Market Alert</b>\n\n` +
-        `🟢 HDFC Bank: <b>₹1,623</b> (+1.81%) — AI Score 91\n` +
-        `🟢 RELIANCE: <b>₹2,847</b> (+1.61%) — AI Score 87\n` +
-        `🔴 WIPRO: <b>₹487</b> (-1.10%) — AI Score 55\n\n` +
-        `💼 Portfolio: <b>₹1,07,345</b> (+₹1,418 today)\n\n` +
+        `📊 <b>TradeMind AI — Market Alert (Test)</b>\n\n` +
+        `${liveLines}\n\n` +
+        `💼 Portfolio Value: <b>₹${livePortfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</b>\n\n` +
         `<i>TradeMind AI · ${new Date().toLocaleString("en-IN")}</i>`
       );
       toast.success("Test alert sent to Telegram!");
@@ -671,16 +683,27 @@ export function NotificationSettings() {
                       <AddAlertForm onAdd={addAlert} />
                     </div>
 
-                    {/* What gets sent section */}
-                    <div className="p-4 rounded-xl bg-white/3 border border-border/50">
-                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Alert Preview</p>
-                      <div className="font-mono text-xs text-gray-300 bg-black/30 rounded-lg p-3 leading-relaxed">
-                        📊 <span className="text-white font-bold">TradeMind AI Alert</span><br />
-                        🟢 HDFC: <span className="text-market-bull">₹1,623 (+1.81%)</span><br />
-                        💼 Portfolio: <span className="text-brand-purple">+₹1,418 today</span><br />
-                        🤖 AI Score: <span className="text-brand-cyan">91 — Strongly Bullish</span>
-                      </div>
-                    </div>
+                    {/* What gets sent section — live values */}
+                    {(() => {
+                      const previewStock = STOCKS[0];
+                      const lq = quotes[previewStock.symbol];
+                      const livePrice = lq?.price ?? previewStock.price;
+                      const livePct = lq?.changePercent ?? previewStock.changePercent;
+                      const bull = livePct >= 0;
+                      const livePortValue = holdings.reduce((s, h) => s + (quotes[h.symbol]?.price ?? h.currentPrice) * h.quantity, 0) + stats.cash;
+                      const dayPnL = holdings.reduce((s, h) => s + ((quotes[h.symbol]?.changePercent ?? 0) / 100) * (quotes[h.symbol]?.price ?? h.currentPrice) * h.quantity, 0);
+                      return (
+                        <div className="p-4 rounded-xl bg-white/3 border border-border/50">
+                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Alert Preview (Live)</p>
+                          <div className="font-mono text-xs text-gray-300 bg-black/30 rounded-lg p-3 leading-relaxed">
+                            📊 <span className="text-white font-bold">TradeMind AI Alert</span><br />
+                            {bull ? "🟢" : "🔴"} {previewStock.symbol}: <span className={bull ? "text-market-bull" : "text-market-bear"}>₹{livePrice.toLocaleString("en-IN", { maximumFractionDigits: 2 })} ({bull ? "+" : ""}{livePct.toFixed(2)}%)</span><br />
+                            💼 Portfolio: <span className="text-brand-purple">₹{livePortValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span><br />
+                            📈 Day P&L: <span className={dayPnL >= 0 ? "text-market-bull" : "text-market-bear"}>{dayPnL >= 0 ? "+" : ""}₹{Math.abs(dayPnL).toFixed(0)}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Disconnect */}
                     <button

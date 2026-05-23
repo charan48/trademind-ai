@@ -1,4 +1,5 @@
 import { STOCKS } from "@/lib/data/mockData";
+import { computeAIScore } from "@/lib/market/calculations";
 import { PortfolioHolding } from "@/lib/types";
 
 export interface StockPick {
@@ -51,8 +52,11 @@ export interface LiveTechInput {
   macdSignal: number;
   ema20: number;
   ema50: number;
+  ema200?: number;
   support: number;
   resistance: number;
+  trend?: string;
+  sentiment?: string;
 }
 
 // ── Buy opportunity scanner ───────────────────────────────────────────────────
@@ -74,6 +78,13 @@ export function getBuySignals(
     const resistance = liveTech?.[s.symbol]?.resistance      ?? s.technicals?.resistance ?? 0;
     const ema20      = liveTech?.[s.symbol]?.ema20           ?? s.ema20;
     const ema50      = liveTech?.[s.symbol]?.ema50           ?? s.ema50;
+    const ema200     = liveTech?.[s.symbol]?.ema200;
+    const trend      = liveTech?.[s.symbol]?.trend;
+
+    // Compute AI score live — never use hardcoded s.aiScore
+    const liveScore = liveTech?.[s.symbol]
+      ? computeAIScore({ rsi, macd, macdSignal, ema20, ema50, ema200, trend, support }, price)
+      : s.aiScore;
 
     const reasons: string[] = [];
     let confidence: "HIGH" | "MEDIUM" = "MEDIUM";
@@ -87,8 +98,8 @@ export function getBuySignals(
     const nearSupport = support > 0 && ((price - support) / support) < 0.03;
     if (nearSupport) reasons.push(`Price near support ₹${support.toLocaleString("en-IN")}`);
 
-    const strongAI = s.aiScore >= 80;
-    if (strongAI) reasons.push(`AI Score ${s.aiScore}/100 — strongly bullish`);
+    const strongAI = liveScore >= 75;
+    if (strongAI) reasons.push(`AI Score ${liveScore}/100 — bullish signal`);
 
     const uptrend = ema20 && ema50 && price > ema20 && ema20 > ema50;
     if (uptrend) reasons.push("Price above EMA20 > EMA50 — uptrend confirmed");
@@ -107,7 +118,7 @@ export function getBuySignals(
       name: s.name,
       price,
       rsi,
-      aiScore: s.aiScore,
+      aiScore: liveScore,
       reason: reasons.slice(0, 2).join(" · "),
       entryZone: `₹${(price * 0.99).toLocaleString("en-IN")} – ₹${(price * 1.01).toLocaleString("en-IN")}`,
       target,
@@ -127,29 +138,41 @@ export function getTopStockPicks(
 ): StockPick[] {
   return STOCKS
     .filter((s) => !excludeSymbols.includes(s.symbol))
-    .sort((a, b) => b.aiScore - a.aiScore)
-    .slice(0, 3)
     .map((s) => {
-      const price        = liveQuotes?.[s.symbol]?.price         ?? s.price;
+      const price         = liveQuotes?.[s.symbol]?.price         ?? s.price;
       const changePercent = liveQuotes?.[s.symbol]?.changePercent ?? s.changePercent;
-      const rsi          = liveTech?.[s.symbol]?.rsi             ?? s.rsi;
-      const support      = liveTech?.[s.symbol]?.support         ?? s.technicals?.support    ?? 0;
-      const resistance   = liveTech?.[s.symbol]?.resistance      ?? s.technicals?.resistance ?? 0;
+      const rsi           = liveTech?.[s.symbol]?.rsi             ?? s.rsi;
+      const support       = liveTech?.[s.symbol]?.support         ?? s.technicals?.support    ?? 0;
+      const resistance    = liveTech?.[s.symbol]?.resistance      ?? s.technicals?.resistance ?? 0;
+      const macd          = liveTech?.[s.symbol]?.macd            ?? s.macd;
+      const macdSignal    = liveTech?.[s.symbol]?.macdSignal      ?? s.macdSignal;
+      const ema20         = liveTech?.[s.symbol]?.ema20           ?? s.ema20;
+      const ema50         = liveTech?.[s.symbol]?.ema50           ?? s.ema50;
+      const ema200        = liveTech?.[s.symbol]?.ema200;
+      const trend         = liveTech?.[s.symbol]?.trend;
+      const sentiment     = liveTech?.[s.symbol]?.sentiment       ?? s.sentiment;
+
+      const liveScore = liveTech?.[s.symbol]
+        ? computeAIScore({ rsi, macd, macdSignal, ema20, ema50, ema200, trend, support }, price)
+        : s.aiScore;
+
+      const reason =
+        rsi < 35  ? "Oversold — strong reversal entry opportunity" :
+        rsi < 45  ? "RSI approaching oversold — potential entry" :
+        (macd > macdSignal && price > ema20) ? "MACD bullish + above EMA20 — uptrend" :
+        (price > ema50 && ema20 > ema50)     ? "Price above EMA20 & EMA50 — momentum" :
+        liveScore >= 75 ? "Strong AI bullish signal + price momentum" :
+        "Positive sector outlook + technical strength";
 
       return {
         symbol: s.symbol,
         name: s.name,
         price,
-        aiScore: s.aiScore,
-        sentiment: s.sentiment,
+        aiScore: liveScore,
+        sentiment,
         rsi,
         changePercent,
-        reason:
-          s.aiScore >= 80
-            ? "Strong AI bullish signal + price momentum"
-            : rsi < 45
-            ? "Oversold — potential reversal entry"
-            : "Positive sector outlook + technical strength",
+        reason,
         entryZone:
           support > 0
             ? `₹${support.toLocaleString("en-IN")} – ₹${(support * 1.02).toLocaleString("en-IN")}`
@@ -157,7 +180,9 @@ export function getTopStockPicks(
         target:   resistance > 0 ? resistance : parseFloat((price * 1.1).toFixed(2)),
         stopLoss: parseFloat((price * 0.93).toFixed(2)),
       };
-    });
+    })
+    .sort((a, b) => b.aiScore - a.aiScore)
+    .slice(0, 3);
 }
 
 // ── Portfolio sell signal scanner ─────────────────────────────────────────────
@@ -177,6 +202,16 @@ export function getSellSignals(
     const macd       = liveTech?.[h.symbol]?.macd       ?? stock.macd;
     const macdSig    = liveTech?.[h.symbol]?.macdSignal ?? stock.macdSignal;
     const resistance = liveTech?.[h.symbol]?.resistance ?? stock.technicals?.resistance ?? 0;
+
+    // Compute live AI score for resistance-near check
+    const ema20  = liveTech?.[h.symbol]?.ema20 ?? stock.ema20;
+    const ema50  = liveTech?.[h.symbol]?.ema50 ?? stock.ema50;
+    const ema200 = liveTech?.[h.symbol]?.ema200;
+    const trend  = liveTech?.[h.symbol]?.trend;
+    const support = liveTech?.[h.symbol]?.support ?? 0;
+    const liveScore = liveTech?.[h.symbol]
+      ? computeAIScore({ rsi, macd, macdSignal: macdSig, ema20, ema50, ema200, trend, support }, price)
+      : stock.aiScore;
 
     const pnlPct = ((price - h.avgBuyPrice) / h.avgBuyPrice) * 100;
 
@@ -198,7 +233,7 @@ export function getSellSignals(
         urgency: "HIGH",
         action: "Exit position immediately to limit loss",
       });
-    } else if (resistance > 0 && price >= resistance * 0.98 && stock.aiScore < 65) {
+    } else if (resistance > 0 && price >= resistance * 0.98 && liveScore < 55) {
       signals.push({
         symbol: h.symbol, name: h.name,
         currentPrice: price, avgBuyPrice: h.avgBuyPrice,
@@ -207,7 +242,7 @@ export function getSellSignals(
         urgency: "MEDIUM",
         action: pnlPct > 5 ? "Book profits at resistance" : "Watch closely, set stop",
       });
-    } else if (pnlPct > 15 && stock.aiScore < 65) {
+    } else if (pnlPct > 15 && liveScore < 55) {
       signals.push({
         symbol: h.symbol, name: h.name,
         currentPrice: price, avgBuyPrice: h.avgBuyPrice,
@@ -250,11 +285,11 @@ export function getPortfolioHealth(
     const stock = STOCKS.find((s) => s.symbol === h.symbol);
     if (!stock) return { symbol: h.symbol, name: h.name, pnlPercent: 0, rsi: 0, status: "HOLD" as const, note: "Data unavailable" };
 
-    const price  = liveQuotes?.[h.symbol]?.price    ?? stock.price;
-    const rsi    = liveTech?.[h.symbol]?.rsi        ?? stock.rsi;
-    const macd   = liveTech?.[h.symbol]?.macd       ?? stock.macd;
+    const price   = liveQuotes?.[h.symbol]?.price    ?? stock.price;
+    const rsi     = liveTech?.[h.symbol]?.rsi        ?? stock.rsi;
+    const macd    = liveTech?.[h.symbol]?.macd       ?? stock.macd;
     const macdSig = liveTech?.[h.symbol]?.macdSignal ?? stock.macdSignal;
-    const pnlPct = ((price - h.avgBuyPrice) / h.avgBuyPrice) * 100;
+    const pnlPct  = ((price - h.avgBuyPrice) / h.avgBuyPrice) * 100;
 
     if (rsi > 72 || pnlPct < -8) {
       return { symbol: h.symbol, name: h.name, pnlPercent: pnlPct, rsi, status: "SELL", note: "Sell signal active" };

@@ -3,36 +3,278 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useRef, useEffect } from "react";
 import { Brain, Send, Sparkles, Trash2, Copy, ThumbsUp } from "lucide-react";
-import { useChatStore } from "@/lib/store/store";
-import { AI_SUGGESTED_QUERIES, AI_RESPONSES } from "@/lib/data/mockData";
+import { useChatStore, useLiveMarketStore } from "@/lib/store/store";
+import { AI_SUGGESTED_QUERIES } from "@/lib/data/mockData";
 import { AIMessage } from "@/lib/types";
+import { STOCKS } from "@/lib/data/mockData";
+import { computeAIScore } from "@/lib/market/calculations";
 
-function getAIResponse(input: string): string {
+// ── Dynamic response generator using live market data ────────────────────────
+function buildLiveResponse(
+  input: string,
+  quotes: Record<string, { price: number; changePercent: number; change: number }>,
+  technicals: Record<string, { rsi: number; macd: number; macdSignal: number; ema20: number; ema50: number; ema200?: number; trend?: string; support?: number; sentiment?: string }>
+): string {
   const lower = input.toLowerCase();
-  if (lower.includes("rsi") || lower.includes("relative strength")) return AI_RESPONSES.rsi;
-  if (lower.includes("swing") || lower.includes("under ₹500") || lower.includes("under 500")) return AI_RESPONSES.swing;
-  return `## AI Analysis: "${input}"
+  const hasLiveData = Object.keys(quotes).length > 0;
 
-Based on current market conditions and technical indicators:
+  // ── Stock-specific query ────────────────────────────────────────────────────
+  const matchedStock = STOCKS.find(
+    (s) => lower.includes(s.symbol.toLowerCase()) || lower.includes(s.name.toLowerCase().split(" ")[0].toLowerCase())
+  );
 
-**Market Overview:**
-The Indian equity markets are showing mixed signals today. NIFTY 50 is up **+0.83%** at 22,847 while IT sector faces minor headwinds.
+  if (matchedStock) {
+    const lq = quotes[matchedStock.symbol];
+    const lt = technicals[matchedStock.symbol];
+    const price = lq?.price ?? matchedStock.price;
+    const changePct = lq?.changePercent ?? matchedStock.changePercent;
+    const rsi = lt?.rsi ?? matchedStock.rsi;
+    const macd = lt?.macd ?? matchedStock.macd;
+    const macdSig = lt?.macdSignal ?? matchedStock.macdSignal;
+    const ema20 = lt?.ema20 ?? matchedStock.ema20;
+    const ema50 = lt?.ema50 ?? matchedStock.ema50;
+    const sentiment = lt?.sentiment ?? matchedStock.sentiment;
+    const aiScore = lt ? computeAIScore({ rsi, macd, macdSignal: macdSig, ema20, ema50, ema200: lt.ema200, trend: lt.trend, support: lt.support }, price) : matchedStock.aiScore;
+    const trend = lt?.trend ?? matchedStock.technicals?.trend ?? "Sideways";
+    const support = lt?.support ?? matchedStock.technicals?.support ?? 0;
+    const resistance = (lt as { resistance?: number } | undefined)?.resistance ?? matchedStock.technicals?.resistance ?? 0;
 
-**Relevant Stocks to Watch:**
-- **HDFC Bank** — AI Score 91 · Strongly Bullish · RSI 67.8
-- **Reliance Industries** — AI Score 87 · Bullish · Strong EMA breakout
-- **Bajaj Finance** — AI Score 82 · Bullish · AUM record growth
+    const rsiNote = rsi < 30 ? "Oversold — strong reversal zone" :
+      rsi < 40 ? "Near oversold — watch for bounce" :
+      rsi > 80 ? "Overbought — consider booking profits" :
+      rsi > 70 ? "Extended — caution on new entry" :
+      "Neutral zone";
+
+    const macdNote = macd > macdSig ? "Bullish crossover — buying pressure" : "Bearish crossover — selling pressure";
+    const emaNote = price > ema20 && ema20 > ema50 ? "Above EMA20 > EMA50 — uptrend confirmed" :
+      price < ema20 ? "Below EMA20 — short-term bearish" : "Mixed EMA signals";
+
+    return `## ${matchedStock.name} (${matchedStock.symbol})
+
+**Live Price:** ₹${price.toLocaleString("en-IN", { maximumFractionDigits: 2 })} ${changePct >= 0 ? "📈" : "📉"} ${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%
+
+**AI Score: ${aiScore}/100 — ${sentiment}**${lq ? " (Live)" : " (Estimated)"}
+
+---
+
+**Technical Analysis:**
+- **RSI (14):** ${rsi.toFixed(1)} — ${rsiNote}
+- **MACD:** ${macd.toFixed(2)} vs Signal ${macdSig.toFixed(2)} — ${macdNote}
+- **EMA:** ${emaNote}
+- **Trend:** ${trend}
+${support > 0 ? `- **Support:** ₹${support.toLocaleString("en-IN")} | **Resistance:** ₹${resistance.toLocaleString("en-IN")}` : ""}
+
+**Sector:** ${matchedStock.sector} · **Exchange:** NSE
 
 **Key Insight:**
-Focus on large-cap financials and energy stocks in the current market environment. Banking sector shows strong momentum with NIM expansion and credit growth.
+${aiScore >= 70 ? `${matchedStock.symbol} shows strong bullish signals. RSI at ${rsi.toFixed(0)} with ${macd > macdSig ? "bullish" : "bearish"} MACD. ${trend === "Uptrend" ? "Uptrend intact across EMAs." : ""}` :
+  aiScore >= 50 ? `${matchedStock.symbol} is neutral — wait for clearer direction. Watch ${macd > macdSig ? "RSI for overbought levels" : "support at ₹" + support.toLocaleString("en-IN")}.` :
+  `${matchedStock.symbol} showing weakness. RSI ${rsi.toFixed(0)}, ${trend.toLowerCase()} trend. Exercise caution.`}
 
-**Risk Note:** Always invest based on your risk tolerance. This is educational content, not financial advice.
+⚠️ Educational only · Not financial advice`;
+  }
 
-*Want me to do a deep dive on any specific stock?*`;
+  // ── RSI / Technical concept queries ─────────────────────────────────────────
+  if (lower.includes("rsi") || lower.includes("relative strength")) {
+    const rsiExamples = STOCKS.slice(0, 3).map((s) => {
+      const lt = technicals[s.symbol];
+      const rsi = lt?.rsi ?? s.rsi;
+      const lq = quotes[s.symbol];
+      const price = lq?.price ?? s.price;
+      const zone = rsi < 30 ? "🟢 Oversold" : rsi > 70 ? "🔴 Overbought" : "⚪ Neutral";
+      return `- **${s.symbol}** ₹${price.toLocaleString("en-IN", { maximumFractionDigits: 2 })} · RSI ${rsi.toFixed(1)} — ${zone}`;
+    }).join("\n");
+
+    return `## RSI — Relative Strength Index
+
+RSI measures momentum on a **0–100 scale**:
+- **< 30** — Oversold (potential buy zone)
+- **30–40** — Approaching oversold (watch for bounce)
+- **40–60** — Neutral
+- **60–70** — Strong momentum
+- **> 70** — Overbought (consider taking profits)
+
+**Current Live RSI Values:**
+${rsiExamples}
+
+**How to trade it:** Don't buy just because RSI < 30 — wait for confirmation like MACD crossover or price above EMA20. RSI divergence (price making new highs but RSI falling) = strong reversal signal.
+
+⚠️ Educational only · Not financial advice`;
+  }
+
+  // ── Swing trade / buy under ₹500 query ──────────────────────────────────────
+  if (lower.includes("swing") || lower.includes("under ₹") || lower.includes("under 500")) {
+    const threshold = (() => {
+      const match = lower.match(/₹(\d+)|under\s+(\d+)/);
+      return match ? parseInt(match[1] ?? match[2]) : 2000;
+    })();
+
+    const affordable = STOCKS
+      .filter((s) => (quotes[s.symbol]?.price ?? s.price) < threshold)
+      .map((s) => {
+        const lt = technicals[s.symbol];
+        const lq = quotes[s.symbol];
+        const price = lq?.price ?? s.price;
+        const rsi = lt?.rsi ?? s.rsi;
+        const score = lt ? computeAIScore({ rsi, macd: lt.macd, macdSignal: lt.macdSignal, ema20: lt.ema20, ema50: lt.ema50, ema200: lt.ema200, trend: lt.trend, support: lt.support }, price) : s.aiScore;
+        const sentiment = lt?.sentiment ?? s.sentiment;
+        return { s, price, rsi, score, sentiment };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+
+    if (affordable.length === 0) {
+      return `No stocks in the portfolio universe priced under ₹${threshold.toLocaleString("en-IN")} right now.`;
+    }
+
+    const lines = affordable.map(({ s, price, rsi, score, sentiment }) =>
+      `- **${s.symbol}** ₹${price.toLocaleString("en-IN", { maximumFractionDigits: 2 })} · AI Score ${score}/100 · RSI ${rsi.toFixed(1)} · ${sentiment}`
+    ).join("\n");
+
+    return `## Stocks Under ₹${threshold.toLocaleString("en-IN")} — Swing Candidates
+
+**Live picks ranked by AI score:**
+${lines}
+
+**Swing trade checklist:**
+1. RSI < 50 (room to run)
+2. MACD bullish crossover or about to cross
+3. Price near support level
+4. Broad market not in correction
+
+Set **7% stop-loss** from entry. Target **10–15% returns** within 2–4 weeks.
+
+⚠️ Educational only · Not financial advice`;
+  }
+
+  // ── Portfolio / market overview ──────────────────────────────────────────────
+  if (lower.includes("portfolio") || lower.includes("market") || lower.includes("best") || lower.includes("buy") || lower.includes("recommend")) {
+    const ranked = STOCKS
+      .map((s) => {
+        const lt = technicals[s.symbol];
+        const lq = quotes[s.symbol];
+        const price = lq?.price ?? s.price;
+        const rsi = lt?.rsi ?? s.rsi;
+        const sentiment = lt?.sentiment ?? s.sentiment;
+        const score = lt ? computeAIScore({ rsi, macd: lt.macd, macdSignal: lt.macdSignal, ema20: lt.ema20, ema50: lt.ema50, ema200: lt.ema200, trend: lt.trend, support: lt.support }, price) : s.aiScore;
+        return { s, price, score, sentiment, rsi, changePct: lq?.changePercent ?? s.changePercent };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+
+    const dataLabel = hasLiveData ? "Live NSE data" : "Estimated data";
+    const lines = ranked.map(({ s, price, score, sentiment, rsi, changePct }) =>
+      `- **${s.symbol}** ₹${price.toLocaleString("en-IN", { maximumFractionDigits: 2 })} (${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%) — AI Score ${score}/100 · ${sentiment} · RSI ${rsi.toFixed(1)}`
+    ).join("\n");
+
+    return `## Market Overview — Top AI Picks
+
+**Top stocks by AI score (${dataLabel}):**
+${lines}
+
+**Current Market Signals:**
+${ranked[0]?.sentiment === "Strongly Bullish" || ranked[0]?.sentiment === "Bullish"
+  ? "Market showing bullish momentum. Large-cap leaders holding key technical levels."
+  : ranked[0]?.sentiment === "Strongly Bearish" || ranked[0]?.sentiment === "Bearish"
+  ? "Caution advised. Broad weakness in technicals — wait for confirmation before entering."
+  : "Markets consolidating. Mixed signals — selective stock-picking approach recommended."}
+
+**Quick strategy:**
+- Enter near support levels
+- Keep 7% hard stop-loss
+- Don't fight the broader trend
+
+⚠️ Educational only · Not financial advice`;
+  }
+
+  // ── MACD explanation ─────────────────────────────────────────────────────────
+  if (lower.includes("macd")) {
+    const examples = STOCKS.slice(0, 3).map((s) => {
+      const lt = technicals[s.symbol];
+      const macd = lt?.macd ?? s.macd;
+      const sig = lt?.macdSignal ?? s.macdSignal;
+      const status = macd > sig ? "🟢 Bullish" : "🔴 Bearish";
+      return `- **${s.symbol}** · MACD ${macd.toFixed(2)} vs Signal ${sig.toFixed(2)} — ${status}`;
+    }).join("\n");
+
+    return `## MACD — Moving Average Convergence Divergence
+
+MACD uses two EMAs (12-day and 26-day) to show momentum shifts:
+- **MACD line > Signal line** → Bullish momentum → potential entry
+- **MACD line < Signal line** → Bearish momentum → caution/exit
+- **Histogram growing** → Momentum strengthening
+
+**Live MACD readings:**
+${examples}
+
+**Best use:** Combine with RSI confirmation. MACD bullish crossover + RSI < 50 = strong entry signal.
+
+⚠️ Educational only · Not financial advice`;
+  }
+
+  // ── EMA explanation ──────────────────────────────────────────────────────────
+  if (lower.includes("ema") || lower.includes("moving average")) {
+    const examples = STOCKS.slice(0, 3).map((s) => {
+      const lt = technicals[s.symbol];
+      const lq = quotes[s.symbol];
+      const price = lq?.price ?? s.price;
+      const ema20 = lt?.ema20 ?? s.ema20;
+      const ema50 = lt?.ema50 ?? s.ema50;
+      const ema200 = lt?.ema200 ?? s.ema200;
+      const status = price > ema20 && ema20 > ema50 ? "🟢 Uptrend" : price < ema20 ? "🔴 Weak" : "⚪ Mixed";
+      return `- **${s.symbol}** ₹${price.toLocaleString("en-IN", { maximumFractionDigits: 2 })} · EMA20 ₹${ema20.toFixed(0)} · EMA50 ₹${ema50.toFixed(0)} · EMA200 ₹${ema200?.toFixed(0) ?? "—"} — ${status}`;
+    }).join("\n");
+
+    return `## EMA — Exponential Moving Average
+
+EMA gives more weight to recent prices, making it more responsive than SMA:
+- **Price > EMA20 > EMA50** → Uptrend — bullish entry
+- **Price < EMA20** → Short-term weakness
+- **Price < EMA200** → Long-term bearish (don't fight it)
+- **Golden Cross** (EMA50 crosses above EMA200) → Major buy signal
+
+**Live EMA data:**
+${examples}
+
+⚠️ Educational only · Not financial advice`;
+  }
+
+  // ── Fallback: generic market overview ────────────────────────────────────────
+  const topPick = STOCKS.map((s) => {
+    const lt = technicals[s.symbol];
+    const lq = quotes[s.symbol];
+    const price = lq?.price ?? s.price;
+    const rsi = lt?.rsi ?? s.rsi;
+    const score = lt ? computeAIScore({ rsi, macd: lt.macd, macdSignal: lt.macdSignal, ema20: lt.ema20, ema50: lt.ema50, ema200: lt.ema200, trend: lt.trend, support: lt.support }, price) : s.aiScore;
+    return { s, score };
+  }).sort((a, b) => b.score - a.score)[0];
+
+  const topLq = quotes[topPick?.s.symbol ?? ""];
+  const topLt = technicals[topPick?.s.symbol ?? ""];
+  const topSentiment = topLt?.sentiment ?? topPick?.s.sentiment ?? "Neutral";
+
+  return `## TradeMind AI Analysis
+
+**Your query:** "${input}"
+
+${hasLiveData ? "**Live NSE Data Active**" : "⚠️ Loading live data…"}
+
+**Top AI Pick right now:**
+${topPick ? `**${topPick.s.symbol}** · AI Score ${topPick.score}/100 · ${topSentiment}
+₹${(topLq?.price ?? topPick.s.price).toLocaleString("en-IN", { maximumFractionDigits: 2 })} (${(topLq?.changePercent ?? topPick.s.changePercent) >= 0 ? "+" : ""}${(topLq?.changePercent ?? topPick.s.changePercent).toFixed(2)}%)` : "Loading…"}
+
+**Try asking about:**
+- A specific stock: "Analyze HDFC Bank" or "Should I buy RELIANCE?"
+- Concepts: "What is RSI?", "Explain MACD", "How to use EMA?"
+- Portfolio: "What should I buy today?"
+- Screeners: "Best stocks under ₹1000"
+
+⚠️ Educational only · Not financial advice`;
 }
 
 export default function AssistantPage() {
   const { messages, isLoading, addMessage, setLoading, clearChat } = useChatStore();
+  const { quotes, technicals } = useLiveMarketStore();
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -55,13 +297,13 @@ export default function AssistantPage() {
     addMessage(userMsg);
     setLoading(true);
 
-    // Simulate AI thinking delay
-    await new Promise((r) => setTimeout(r, 800 + Math.random() * 800));
+    // Small delay for UX
+    await new Promise((r) => setTimeout(r, 600 + Math.random() * 400));
 
     const aiMsg: AIMessage = {
       id: (Date.now() + 1).toString(),
       role: "assistant",
-      content: getAIResponse(query),
+      content: buildLiveResponse(query, quotes, technicals),
       timestamp: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
     };
     addMessage(aiMsg);
@@ -87,7 +329,9 @@ export default function AssistantPage() {
             <h1 className="text-base font-bold text-white">TradeMind AI</h1>
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 bg-market-bull rounded-full animate-pulse" />
-              <span className="text-xs text-gray-400">Active · Powered by Claude</span>
+              <span className="text-xs text-gray-400">
+                Active · {Object.keys(quotes).length > 0 ? "Live NSE data" : "Loading market data…"}
+              </span>
             </div>
           </div>
         </div>
@@ -115,7 +359,7 @@ export default function AssistantPage() {
             </div>
             <h2 className="text-2xl font-black text-white mb-2">Ask TradeMind AI</h2>
             <p className="text-gray-400 text-sm max-w-md mb-10">
-              Get AI-powered stock insights, learn market concepts, and discover trading opportunities — all in plain English.
+              Get AI-powered insights using live NSE prices, RSI, MACD, and EMA signals — all in plain English.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-2xl w-full">
@@ -142,7 +386,6 @@ export default function AssistantPage() {
               transition={{ duration: 0.3 }}
               className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
             >
-              {/* Avatar */}
               <div className={`w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center ${
                 msg.role === "user"
                   ? "bg-gradient-to-br from-brand-purple to-brand-blue"
@@ -155,7 +398,6 @@ export default function AssistantPage() {
                 )}
               </div>
 
-              {/* Bubble */}
               <div className={`max-w-[75%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col gap-1`}>
                 <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                   msg.role === "user"
@@ -188,7 +430,6 @@ export default function AssistantPage() {
           ))}
         </AnimatePresence>
 
-        {/* Typing indicator */}
         {isLoading && (
           <motion.div
             initial={{ opacity: 0, y: 16 }}
@@ -249,7 +490,7 @@ export default function AssistantPage() {
           </button>
         </div>
         <p className="text-center text-xs text-gray-700 mt-2">
-          TradeMind AI · For educational purposes only · Not financial advice
+          TradeMind AI · Live NSE data · For educational purposes only · Not financial advice
         </p>
       </div>
     </div>
@@ -262,6 +503,7 @@ function FormattedMessage({ content }: { content: string }) {
     <div className="space-y-2">
       {lines.map((line, i) => {
         if (line.startsWith("## ")) return <h3 key={i} className="text-base font-bold text-white">{line.replace("## ", "")}</h3>;
+        if (line.startsWith("---")) return <hr key={i} className="border-white/10" />;
         if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-bold text-white">{line.replace(/\*\*/g, "")}</p>;
         if (line.startsWith("- ") || line.startsWith("• ")) {
           return (
