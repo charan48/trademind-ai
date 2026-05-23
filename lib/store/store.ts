@@ -3,12 +3,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { WatchlistItem, PortfolioHolding, Trade, AIMessage, PortfolioStats } from "@/lib/types";
-import {
-  DEFAULT_WATCHLIST,
-  PORTFOLIO_HOLDINGS,
-  TRADE_HISTORY,
-  PORTFOLIO_STATS,
-} from "@/lib/data/mockData";
 
 // ─── Watchlist Store ──────────────────────────────────────────────────────────
 interface WatchlistStore {
@@ -21,16 +15,29 @@ interface WatchlistStore {
 export const useWatchlistStore = create<WatchlistStore>()(
   persist(
     (set, get) => ({
-      items: DEFAULT_WATCHLIST,
+      items: [],
       addItem: (item) =>
         set((s) => ({ items: s.items.some((i) => i.symbol === item.symbol) ? s.items : [...s.items, item] })),
       removeItem: (symbol) =>
         set((s) => ({ items: s.items.filter((i) => i.symbol !== symbol) })),
       hasItem: (symbol) => get().items.some((i) => i.symbol === symbol),
     }),
-    { name: "trademind-watchlist" }
+    { name: "trademind-watchlist-v2" }
   )
 );
+
+// ─── Empty initial portfolio stats ───────────────────────────────────────────
+const EMPTY_STATS: PortfolioStats = {
+  totalInvested: 0,
+  currentValue: 0,
+  totalPnL: 0,
+  totalPnLPercent: 0,
+  dayPnL: 0,
+  dayPnLPercent: 0,
+  cash: 1_000_000, // ₹10,00,000 virtual starting balance
+  xirr: 0,
+  holdings: 0,
+};
 
 // ─── Portfolio Store ──────────────────────────────────────────────────────────
 interface PortfolioStore {
@@ -39,14 +46,15 @@ interface PortfolioStore {
   stats: PortfolioStats;
   buyStock: (symbol: string, name: string, sector: string, quantity: number, price: number) => void;
   sellStock: (symbol: string, quantity: number, price: number) => void;
+  resetPortfolio: () => void;
 }
 
 export const usePortfolioStore = create<PortfolioStore>()(
   persist(
     (set, get) => ({
-      holdings: PORTFOLIO_HOLDINGS,
-      trades: TRADE_HISTORY,
-      stats: PORTFOLIO_STATS,
+      holdings: [],
+      trades: [],
+      stats: EMPTY_STATS,
 
       buyStock: (symbol, name, sector, quantity, price) => {
         const total = quantity * price;
@@ -127,8 +135,10 @@ export const usePortfolioStore = create<PortfolioStore>()(
           },
         }));
       },
+
+      resetPortfolio: () => set({ holdings: [], trades: [], stats: EMPTY_STATS }),
     }),
-    { name: "trademind-portfolio" }
+    { name: "trademind-portfolio-v3" } // v3 = fresh empty start
   )
 );
 

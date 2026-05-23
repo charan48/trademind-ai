@@ -11,6 +11,7 @@ import { formatINR, formatPercent, getSentimentColor } from "@/lib/utils";
 import { generateIntraday } from "@/lib/utils";
 import { LiveClock } from "@/components/shared/LiveClock";
 import { computeAIScore as calcAIScore } from "@/lib/market/calculations";
+import { getTopStockPicks } from "@/lib/alerts/alertEngine";
 
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.06 } } };
 const item = { hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.4 } } };
@@ -51,17 +52,23 @@ export default function DashboardPage() {
   const quotesLoaded = Object.keys(quotes).length > 0;
   const techLoaded   = Object.keys(technicals).length > 0;
 
-  // ── AI Recommendations — sorted by live score ──────────────────────────────
-  const aiRecs = STOCKS
-    .filter((s) => quotes[s.symbol] && technicals[s.symbol])
+  // ── AI Recommendations — uses getTopStockPicks (entry score + AI score combined) ──
+  const heldSymbols = holdings.map((h) => h.symbol);
+  const topPicks    = techLoaded ? getTopStockPicks([], quotes as Record<string, { price: number; changePercent: number }>, technicals) : [];
+  // Supplement with remaining stocks sorted by AI score
+  const pickSymbols = new Set(topPicks.map((p) => p.symbol));
+  const extraRecs = STOCKS
+    .filter((s) => !pickSymbols.has(s.symbol) && quotes[s.symbol] && technicals[s.symbol])
     .map((s) => {
-      const lq = quotes[s.symbol];
-      const lt = technicals[s.symbol];
+      const lq = quotes[s.symbol]; const lt = technicals[s.symbol];
       const score = computeAIScore(lt, lq.price);
-      return { symbol: s.symbol, name: s.name, score, sentiment: lt.sentiment, price: lq.price, changePercent: lq.changePercent, reason: buildReason(lt, lq.price, s.name) };
+      return { symbol: s.symbol, name: s.name, score, entryScore: 0, sentiment: lt.sentiment, price: lq.price, changePercent: lq.changePercent, reason: buildReason(lt, lq.price, s.name), strategy: "watch", expectedReturn: 0, target: 0, stopLoss: 0 };
     })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 4);
+    .sort((a, b) => b.score - a.score);
+  const aiRecs = [
+    ...topPicks.map((p) => ({ symbol: p.symbol, name: p.name, score: p.aiScore, entryScore: p.entryScore, sentiment: p.sentiment, price: p.price, changePercent: p.changePercent, reason: p.reason, strategy: p.strategy, expectedReturn: p.expectedReturn, target: p.target, stopLoss: p.stopLoss })),
+    ...extraRecs,
+  ].slice(0, 4);
 
   // ── Gainers / Losers — only from live quotes, no mock fallback ─────────────
   const liveStocks = STOCKS
@@ -192,12 +199,14 @@ export default function DashboardPage() {
               <p className="text-sm text-gray-500 text-center py-6">No live data available — retrying…</p>
             )}
             <div className="space-y-3">
-              {aiRecs.map(({ symbol, name, score, sentiment, price, changePercent, reason }) => {
+              {aiRecs.map(({ symbol, name, score, entryScore, sentiment, price, changePercent, reason, strategy, expectedReturn, target }, idx) => {
                 const bull = changePercent >= 0;
                 const sc   = scoreColor(score);
+                const isMorningPick = idx < topPicks.length;
+                const stratLabel = strategy === "reversal" ? "Reversal" : strategy === "support-bounce" ? "Support" : strategy === "momentum" ? "Momentum" : strategy === "trend-continuation" ? "Trend" : "";
                 return (
                   <Link key={symbol} href={`/stock/${symbol}`}
-                    className="flex items-center gap-4 p-3 rounded-xl bg-white/3 hover:bg-white/6 border border-border/50 hover:border-brand-purple/20 transition-all group"
+                    className="flex items-center gap-3 p-3 rounded-xl bg-white/3 hover:bg-white/6 border border-border/50 hover:border-brand-purple/20 transition-all group"
                   >
                     <div className="flex-shrink-0 text-center">
                       <div className="w-11 h-11 rounded-xl flex items-center justify-center border-2" style={{ borderColor: sc + "60", background: sc + "18" }}>
@@ -206,11 +215,20 @@ export default function DashboardPage() {
                       <p className="text-xs text-gray-600 mt-0.5">AI</p>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-bold text-white">{symbol}</span>
                         <span className="text-xs font-num text-gray-300">₹{price.toLocaleString("en-IN")}</span>
+                        {isMorningPick && stratLabel && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-md bg-brand-purple/20 text-brand-purple font-semibold">{stratLabel}</span>
+                        )}
+                        {isMorningPick && entryScore > 0 && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-md bg-brand-cyan/10 text-brand-cyan font-semibold">Entry {entryScore}</span>
+                        )}
                       </div>
                       <p className="text-xs text-gray-400 mt-0.5 truncate">{reason}</p>
+                      {isMorningPick && target > 0 && expectedReturn > 0 && (
+                        <p className="text-xs text-market-bull mt-0.5">Target ₹{target.toLocaleString("en-IN")} (+{expectedReturn}%)</p>
+                      )}
                     </div>
                     <div className="flex-shrink-0 text-right">
                       <p className={`text-xs font-semibold ${bull ? "text-market-bull" : "text-market-bear"}`}>
@@ -284,29 +302,41 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-bold text-white">Portfolio</h2>
               <Link href="/portfolio" className="text-xs text-brand-purple hover:text-brand-blue flex items-center gap-1">
-                View All <ArrowRight className="w-3 h-3" />
+                {holdings.length > 0 ? "View All" : "Start"} <ArrowRight className="w-3 h-3" />
               </Link>
             </div>
-            <div className="flex items-center gap-4 mb-4">
-              <div className="w-24 h-24 flex-shrink-0">
-                <ClientOnly fallback={<div className="w-24 h-24 skeleton rounded-full" />}>
-                  {donutData.length > 0 ? (
-                    <PieChart width={96} height={96}>
-                      <Pie data={donutData} cx={44} cy={44} innerRadius={28} outerRadius={44} dataKey="value" strokeWidth={0}>
-                        {donutData.map(({ color }, i) => <Cell key={i} fill={color} />)}
-                      </Pie>
-                    </PieChart>
-                  ) : (
-                    <div className="w-24 h-24 rounded-full border-4 border-dashed border-white/10 flex items-center justify-center">
-                      <span className="text-xs text-gray-600">Empty</span>
-                    </div>
-                  )}
-                </ClientOnly>
+
+            {holdings.length === 0 ? (
+              /* Empty state — guide user to buy first stock */
+              <div className="flex flex-col items-center text-center py-4">
+                <div className="w-12 h-12 rounded-full border-2 border-dashed border-brand-purple/30 flex items-center justify-center mb-3">
+                  <Brain className="w-5 h-5 text-brand-purple/50" />
+                </div>
+                <p className="text-xs text-gray-400 mb-1">Virtual balance: <span className="text-white font-bold">{formatINR(stats.cash)}</span></p>
+                <p className="text-xs text-gray-600 mb-3">Buy stocks to start. AI will monitor and alert when to sell.</p>
+                <div className="grid grid-cols-2 gap-2 w-full">
+                  {(topPicks.length > 0 ? topPicks.slice(0, 2).map(p => p.symbol) : STOCKS.slice(0, 2).map(s => s.symbol)).map((sym) => (
+                    <Link key={sym} href={`/stock/${sym}`}
+                      className="px-3 py-2 rounded-lg bg-brand-purple/10 border border-brand-purple/20 text-xs text-brand-purple hover:bg-brand-purple/20 transition-colors text-center font-semibold">
+                      Buy {sym}
+                    </Link>
+                  ))}
+                </div>
               </div>
-              <div>
-                <p className="text-2xl font-black font-num text-white">{formatINR(portfolioValue)}</p>
-                {holdings.length > 0 ? (
-                  <>
+            ) : (
+              <>
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="w-24 h-24 flex-shrink-0">
+                    <ClientOnly fallback={<div className="w-24 h-24 skeleton rounded-full" />}>
+                      <PieChart width={96} height={96}>
+                        <Pie data={donutData} cx={44} cy={44} innerRadius={28} outerRadius={44} dataKey="value" strokeWidth={0}>
+                          {donutData.map(({ color }, i) => <Cell key={i} fill={color} />)}
+                        </Pie>
+                      </PieChart>
+                    </ClientOnly>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-black font-num text-white">{formatINR(portfolioValue)}</p>
                     <div className="flex items-center gap-1 mt-1">
                       {totalPnLPct >= 0 ? <TrendingUp className="w-3.5 h-3.5 text-market-bull" /> : <TrendingDown className="w-3.5 h-3.5 text-market-bear" />}
                       <span className={`text-sm font-semibold ${totalPnLPct >= 0 ? "text-market-bull" : "text-market-bear"}`}>
@@ -314,24 +344,22 @@ export default function DashboardPage() {
                       </span>
                     </div>
                     <p className="text-xs text-gray-500 mt-1">Invested: {formatINR(totalInvested)}</p>
-                  </>
-                ) : (
-                  <p className="text-xs text-gray-500 mt-1">No holdings yet</p>
-                )}
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3 pt-3 border-t border-border">
-              <div className="bg-brand-purple/8 rounded-lg p-3">
-                <p className="text-xs text-gray-500">Cash</p>
-                <p className="text-sm font-bold font-num text-brand-purple">{formatINR(stats.cash)}</p>
-              </div>
-              <div className={`rounded-lg p-3 ${totalPnL >= 0 ? "bg-market-bull/8" : "bg-market-bear/8"}`}>
-                <p className="text-xs text-gray-500">Total P&L</p>
-                <p className={`text-sm font-bold font-num ${totalPnL >= 0 ? "text-market-bull" : "text-market-bear"}`}>
-                  {totalPnL >= 0 ? "+" : ""}{formatINR(Math.abs(totalPnL))}
-                </p>
-              </div>
-            </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 pt-3 border-t border-border">
+                  <div className="bg-brand-purple/8 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Cash</p>
+                    <p className="text-sm font-bold font-num text-brand-purple">{formatINR(stats.cash)}</p>
+                  </div>
+                  <div className={`rounded-lg p-3 ${totalPnL >= 0 ? "bg-market-bull/8" : "bg-market-bear/8"}`}>
+                    <p className="text-xs text-gray-500">Total P&L</p>
+                    <p className={`text-sm font-bold font-num ${totalPnL >= 0 ? "text-market-bull" : "text-market-bear"}`}>
+                      {totalPnL >= 0 ? "+" : ""}{formatINR(Math.abs(totalPnL))}
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
           </motion.div>
 
           {/* Watchlist — live prices only */}
