@@ -29,6 +29,20 @@ interface ChartPoint {
   volume?: number;
 }
 
+function computeAIScore(lt: { rsi: number; macd: number; macdSignal: number; ema20: number; ema50: number; ema200: number; trend: string; support: number }, price: number): number {
+  let score = 50;
+  if (lt.rsi < 30) score += 20; else if (lt.rsi < 40) score += 12;
+  else if (lt.rsi < 50) score += 5; else if (lt.rsi > 80) score -= 15;
+  else if (lt.rsi > 70) score -= 10; else if (lt.rsi > 60) score -= 3;
+  if (lt.macd > lt.macdSignal) score += 12; else score -= 8;
+  if (lt.ema20 > 0) { if (price > lt.ema20) score += 8; else score -= 6; }
+  if (lt.ema50 > 0) { if (price > lt.ema50) score += 8; else score -= 6; }
+  if (lt.ema200 > 0) { if (price > lt.ema200) score += 8; else score -= 6; }
+  if (lt.trend === "Uptrend") score += 5; else if (lt.trend === "Downtrend") score -= 5;
+  if (lt.support > 0 && price > 0 && (price - lt.support) / lt.support < 0.03) score += 7;
+  return Math.max(5, Math.min(100, Math.round(score)));
+}
+
 function computeSignalCounts(
   price: number, rsi: number, macd: number, macdSig: number,
   ema20: number, ema50: number, support: number, resistance: number
@@ -89,7 +103,8 @@ export default function StockPage() {
     : { buySignals: stock.technicals.buySignals, sellSignals: stock.technicals.sellSignals, neutralSignals: stock.technicals.neutralSignals };
 
   const bull       = liveChangePercent >= 0;
-  const scoreColor = getAIScoreColor(stock.aiScore);
+  const liveAIScore = lt ? computeAIScore({ rsi, macd, macdSignal, ema20, ema50, ema200, trend, support }, livePrice) : stock.aiScore;
+  const scoreColor = getAIScoreColor(liveAIScore);
 
   // Fetch live chart data
   useEffect(() => {
@@ -154,7 +169,7 @@ export default function StockPage() {
         symbol: stock.symbol, name: stock.name,
         price: livePrice, change: liveChange,
         changePercent: liveChangePercent,
-        aiScore: stock.aiScore, sector: stock.sector,
+        aiScore: liveAIScore, sector: stock.sector,
       });
       toast.success(`${stock.symbol} added to watchlist`);
     }
@@ -205,7 +220,7 @@ export default function StockPage() {
           <div className="flex items-center gap-4">
             <div className="text-center">
               <div className="w-16 h-16 rounded-2xl border-2 flex items-center justify-center" style={{ borderColor: scoreColor + "60", background: scoreColor + "15" }}>
-                <p className="text-xl font-black" style={{ color: scoreColor }}>{stock.aiScore}</p>
+                <p className="text-xl font-black" style={{ color: scoreColor }}>{liveAIScore}</p>
               </div>
               <p className="text-xs text-gray-500 mt-1 font-semibold">AI Score</p>
               <p className={`text-xs font-semibold ${getSentimentColor(liveSentiment)}`}>{liveSentiment}</p>
