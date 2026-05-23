@@ -50,3 +50,21 @@ export function lastValid(arr: number[]): number {
   }
   return 0;
 }
+
+// Derive sentiment from live technicals — replaces hardcoded mock sentiment
+export function deriveSentiment(
+  price: number, rsi: number, macd: number, macdSignal: number,
+  ema20: number, ema50: number, ema200: number
+): string {
+  let bull = 0, bear = 0;
+  if (rsi >= 60) bull++; else if (rsi <= 40) bear++;
+  if (macd > macdSignal) bull++; else bear++;
+  if (ema20 > 0) { if (price > ema20) bull++; else bear++; }
+  if (ema50 > 0) { if (price > ema50) bull++; else bear++; }
+  if (ema200 > 0) { if (price > ema200) bull++; else bear++; }
+  if (bull >= 4) return "Strongly Bullish";
+  if (bull >= 3) return "Bullish";
+  if (bear >= 4) return "Strongly Bearish";
+  if (bear >= 3) return "Bearish";
+  return "Neutral";
+}

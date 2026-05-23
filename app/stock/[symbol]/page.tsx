@@ -81,6 +81,8 @@ export default function StockPage() {
   const support    = lt?.support    ?? stock.technicals.support;
   const resistance = lt?.resistance ?? stock.technicals.resistance;
   const trend      = lt?.trend      ?? "Sideways";
+  // Use live-derived sentiment when available — replaces stale mock
+  const liveSentiment: string = lt?.sentiment ?? stock.sentiment;
 
   const signals = lt
     ? computeSignalCounts(livePrice, rsi, macd, macdSignal, ema20, ema50, support, resistance)
@@ -92,7 +94,7 @@ export default function StockPage() {
   // Fetch live chart data
   useEffect(() => {
     setChartLoading(true);
-    fetch(`/api/market/chart/${symbol}?range=6mo`)
+    fetch(`/api/market/chart/${symbol}?range=2y`)
       .then((r) => r.json())
       .then((d) => {
         if (d.ok && d.chartData?.length) {
@@ -117,7 +119,7 @@ export default function StockPage() {
     : (stock.chartData as unknown as ChartPoint[]);
 
   const chartData = baseChartData.slice(
-    period === "1W" ? -7 : period === "1M" ? -22 : period === "6M" ? -126 : -63
+    period === "1W" ? -7 : period === "1M" ? -22 : period === "3M" ? -63 : period === "6M" ? -126 : -252
   );
 
   const handleTrade = () => {
@@ -206,7 +208,7 @@ export default function StockPage() {
                 <p className="text-xl font-black" style={{ color: scoreColor }}>{stock.aiScore}</p>
               </div>
               <p className="text-xs text-gray-500 mt-1 font-semibold">AI Score</p>
-              <p className={`text-xs font-semibold ${getSentimentColor(stock.sentiment)}`}>{stock.sentiment}</p>
+              <p className={`text-xs font-semibold ${getSentimentColor(liveSentiment)}`}>{liveSentiment}</p>
             </div>
             <div className="flex flex-col gap-2">
               <button
@@ -268,7 +270,7 @@ export default function StockPage() {
                   )}
                 </div>
                 <div className="flex gap-1">
-                  {["1W", "1M", "3M", "6M"].map((p) => (
+                  {["1W", "1M", "3M", "6M", "1Y"].map((p) => (
                     <button
                       key={p}
                       onClick={() => setPeriod(p)}
@@ -322,8 +324,8 @@ export default function StockPage() {
               <div className="flex items-center gap-3 mb-2">
                 <Brain className="w-5 h-5 text-brand-purple" />
                 <h2 className="text-base font-bold text-white">TradeMind AI Analysis</h2>
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${getSentimentColor(stock.sentiment)} bg-current/10 border border-current/20`}>
-                  {stock.sentiment}
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${getSentimentColor(liveSentiment)} bg-current/10 border border-current/20`}>
+                  {liveSentiment}
                 </span>
                 {lt && <span className="text-xs text-market-bull font-semibold px-2 py-0.5 rounded-full bg-market-bull/10">Live Data</span>}
               </div>

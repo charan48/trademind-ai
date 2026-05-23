@@ -192,6 +192,7 @@ export interface LiveTechnicals {
   support: number;
   resistance: number;
   trend: string;
+  sentiment: string;
 }
 
 interface LiveMarketStore {

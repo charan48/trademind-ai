@@ -45,7 +45,7 @@ export function useLiveMarket() {
     await Promise.allSettled(
       ALL_STOCK_SYMBOLS.map(async (sym) => {
         try {
-          const res = await fetch(`/api/market/chart/${sym}?range=6mo`, { cache: "no-store" });
+          const res = await fetch(`/api/market/chart/${sym}?range=2y`, { cache: "no-store" });
           const data = await res.json();
           if (data.ok && data.technicals) {
             setTechnicals(sym, data.technicals as LiveTechnicals);
