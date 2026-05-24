@@ -231,8 +231,8 @@ export function getHoldingHealth(
     if (pnlPct >= 25 && macd < macdSig) {
       return { symbol: h.symbol, status: "SELL", urgency: "HIGH", reason: `Up ${pnlPct.toFixed(1)}% + MACD turning bearish — book profits`, action: "Book 75% profits, trail stop on rest", target, stopLoss, pnlPercent: pnlPct };
     }
-    if (resistance > 0 && price >= resistance * 0.98 && rsi > 65) {
-      return { symbol: h.symbol, status: "SELL", urgency: "MEDIUM", reason: `At resistance ₹${resistance.toLocaleString("en-IN")} with high RSI`, action: pnlPct > 0 ? "Book profits at resistance" : "Exit before breakdown", target, stopLoss, pnlPercent: pnlPct };
+    if (resistance > 0 && price >= resistance * 0.98 && rsi > 65 && pnlPct > 3) {
+      return { symbol: h.symbol, status: "SELL", urgency: "MEDIUM", reason: `At resistance ₹${resistance.toLocaleString("en-IN")} with high RSI`, action: "Book profits at resistance", target, stopLoss, pnlPercent: pnlPct };
     }
     if (ema20 > 0 && ema50 > 0 && price < ema20 && ema20 < ema50 && pnlPct < -3) {
       return { symbol: h.symbol, status: "SELL", urgency: "MEDIUM", reason: "EMA20 crossed below EMA50 — downtrend starting", action: "Exit or set tight stop at EMA20", target, stopLoss, pnlPercent: pnlPct };

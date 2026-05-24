@@ -11,7 +11,7 @@ import { formatINR, formatPercent, getSentimentColor } from "@/lib/utils";
 import { generateIntraday } from "@/lib/utils";
 import { LiveClock } from "@/components/shared/LiveClock";
 import { computeAIScore as calcAIScore } from "@/lib/market/calculations";
-import { getTopStockPicks } from "@/lib/alerts/alertEngine";
+import { getTopStockPicks, getHoldingHealth, HoldingHealth } from "@/lib/alerts/alertEngine";
 
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.06 } } };
 const item = { hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.4 } } };
@@ -39,6 +39,45 @@ function buildReason(lt: LiveTechnicals, price: number, stockName: string): stri
 
 const scoreColor = (s: number) => s >= 70 ? "#10B981" : s >= 50 ? "#8B5CF6" : "#EF4444";
 
+// ── Simple action tag — buy/wait/avoid for unowned, keep/watch/sell for owned ─
+function getActionTag(
+  aiScore: number,
+  entryScore: number,
+  sentiment: string,
+  rsi: number,
+  macd: number,
+  macdSignal: number,
+  isHeld: boolean,
+  health?: HoldingHealth
+): { label: string; textColor: string; bgClass: string; tip: string } {
+  if (isHeld && health) {
+    if (health.status === "SELL")
+      return { label: "🚨 SELL", textColor: "text-red-400", bgClass: "bg-red-500/15 border border-red-500/30", tip: health.reason };
+    if (health.status === "WATCH")
+      return { label: "👀 WATCH", textColor: "text-amber-400", bgClass: "bg-amber-500/15 border border-amber-500/30", tip: health.reason };
+    return { label: "✅ KEEP", textColor: "text-emerald-400", bgClass: "bg-emerald-500/15 border border-emerald-500/30", tip: health.reason };
+  }
+  // Unowned — should you buy?
+  const macdBull  = macd > macdSignal;
+  const rsiGood   = rsi >= 28 && rsi <= 68;
+  const isBullish = sentiment.toLowerCase().includes("bullish");
+  const isBearish = sentiment.toLowerCase().includes("bearish");
+  if (rsi > 78)
+    return { label: "❌ AVOID", textColor: "text-red-400", bgClass: "bg-red-500/15 border border-red-500/30", tip: "Heavily overbought — high reversal risk" };
+  if (aiScore < 45 && isBearish)
+    return { label: "❌ AVOID", textColor: "text-red-400", bgClass: "bg-red-500/15 border border-red-500/30", tip: "Weak AI score + bearish signals" };
+  const metCount = [aiScore >= 65, entryScore >= 50, rsiGood, macdBull, isBullish].filter(Boolean).length;
+  // All hard gates must pass: RSI safe zone + entry quality minimum + 4/5 signals
+  if (metCount >= 4 && rsiGood && entryScore >= 45)
+    return { label: "✅ BUY NOW", textColor: "text-emerald-400", bgClass: "bg-emerald-500/15 border border-emerald-500/30", tip: `AI ${aiScore} · Entry ${entryScore} — signals aligned` };
+  const tip = rsi > 72 ? `RSI ${Math.round(rsi)} — overbought, wait for dip to ≤65`
+    : rsi > 68     ? `RSI ${Math.round(rsi)} — extended, add on pullback`
+    : !macdBull    ? "Wait for MACD bullish confirmation"
+    : entryScore < 40 ? "Overextended price — wait for a dip"
+    : "Mixed signals — monitor closer";
+  return { label: "⏳ WAIT", textColor: "text-amber-400", bgClass: "bg-amber-500/15 border border-amber-500/30", tip };
+}
+
 const SECTOR_COLORS: Record<string, string> = {
   Banking: "#6366F1", Energy: "#8B5CF6", IT: "#06B6D4",
   NBFC: "#10B981", Conglomerate: "#F59E0B", Infrastructure: "#EC4899",
@@ -54,6 +93,10 @@ export default function DashboardPage() {
 
   // ── AI Recommendations — uses getTopStockPicks (entry score + AI score combined) ──
   const heldSymbols = holdings.map((h) => h.symbol);
+  const holdingHealthList = techLoaded && holdings.length > 0
+    ? getHoldingHealth(holdings, quotes as Record<string, { price: number; changePercent: number }>, technicals)
+    : [];
+  const holdingHealthMap: Record<string, HoldingHealth> = Object.fromEntries(holdingHealthList.map((h) => [h.symbol, h]));
   const topPicks    = techLoaded ? getTopStockPicks([], quotes as Record<string, { price: number; changePercent: number }>, technicals) : [];
   // Supplement with remaining stocks sorted by AI score
   const pickSymbols = new Set(topPicks.map((p) => p.symbol));
@@ -62,11 +105,11 @@ export default function DashboardPage() {
     .map((s) => {
       const lq = quotes[s.symbol]; const lt = technicals[s.symbol];
       const score = computeAIScore(lt, lq.price);
-      return { symbol: s.symbol, name: s.name, score, entryScore: 0, sentiment: lt.sentiment, price: lq.price, changePercent: lq.changePercent, reason: buildReason(lt, lq.price, s.name), strategy: "watch", expectedReturn: 0, target: 0, stopLoss: 0 };
+      return { symbol: s.symbol, name: s.name, score, entryScore: 0, sentiment: lt.sentiment, price: lq.price, changePercent: lq.changePercent, reason: buildReason(lt, lq.price, s.name), strategy: "watch", expectedReturn: 0, target: 0, stopLoss: 0, rsi: lt.rsi, macd: lt.macd, macdSignal: lt.macdSignal };
     })
     .sort((a, b) => b.score - a.score);
   const aiRecs = [
-    ...topPicks.map((p) => ({ symbol: p.symbol, name: p.name, score: p.aiScore, entryScore: p.entryScore, sentiment: p.sentiment, price: p.price, changePercent: p.changePercent, reason: p.reason, strategy: p.strategy, expectedReturn: p.expectedReturn, target: p.target, stopLoss: p.stopLoss })),
+    ...topPicks.map((p) => ({ symbol: p.symbol, name: p.name, score: p.aiScore, entryScore: p.entryScore, sentiment: p.sentiment, price: p.price, changePercent: p.changePercent, reason: p.reason, strategy: p.strategy, expectedReturn: p.expectedReturn, target: p.target, stopLoss: p.stopLoss, rsi: p.rsi, macd: technicals[p.symbol]?.macd ?? 0, macdSignal: technicals[p.symbol]?.macdSignal ?? 0 })),
     ...extraRecs,
   ].slice(0, 4);
 
@@ -199,11 +242,13 @@ export default function DashboardPage() {
               <p className="text-sm text-gray-500 text-center py-6">No live data available — retrying…</p>
             )}
             <div className="space-y-3">
-              {aiRecs.map(({ symbol, name, score, entryScore, sentiment, price, changePercent, reason, strategy, expectedReturn, target }, idx) => {
+              {aiRecs.map(({ symbol, name, score, entryScore, sentiment, price, changePercent, reason, strategy, expectedReturn, target, rsi, macd, macdSignal }, idx) => {
                 const bull = changePercent >= 0;
                 const sc   = scoreColor(score);
                 const isMorningPick = idx < topPicks.length;
+                const isHeld = heldSymbols.includes(symbol);
                 const stratLabel = strategy === "reversal" ? "Reversal" : strategy === "support-bounce" ? "Support" : strategy === "momentum" ? "Momentum" : strategy === "trend-continuation" ? "Trend" : "";
+                const tag = getActionTag(score, entryScore, sentiment, rsi ?? 50, macd ?? 0, macdSignal ?? 0, isHeld, holdingHealthMap[symbol]);
                 return (
                   <Link key={symbol} href={`/stock/${symbol}`}
                     className="flex items-center gap-3 p-3 rounded-xl bg-white/3 hover:bg-white/6 border border-border/50 hover:border-brand-purple/20 transition-all group"
@@ -218,6 +263,10 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-bold text-white">{symbol}</span>
                         <span className="text-xs font-num text-gray-300">₹{price.toLocaleString("en-IN")}</span>
+                        {/* Action tag — most important badge */}
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${tag.bgClass} ${tag.textColor}`}>
+                          {tag.label}
+                        </span>
                         {isMorningPick && stratLabel && (
                           <span className="text-xs px-1.5 py-0.5 rounded-md bg-brand-purple/20 text-brand-purple font-semibold">{stratLabel}</span>
                         )}
@@ -225,7 +274,9 @@ export default function DashboardPage() {
                           <span className="text-xs px-1.5 py-0.5 rounded-md bg-brand-cyan/10 text-brand-cyan font-semibold">Entry {entryScore}</span>
                         )}
                       </div>
-                      <p className="text-xs text-gray-400 mt-0.5 truncate">{reason}</p>
+                      {/* Tag tip — one-line plain-English explanation */}
+                      <p className={`text-xs mt-0.5 font-medium ${tag.textColor} opacity-80`}>{tag.tip}</p>
+                      <p className="text-xs text-gray-500 mt-0.5 truncate">{reason}</p>
                       {isMorningPick && target > 0 && expectedReturn > 0 && (
                         <p className="text-xs text-market-bull mt-0.5">Target ₹{target.toLocaleString("en-IN")} (+{expectedReturn}%)</p>
                       )}
